@@ -91,7 +91,7 @@
     if(urlStr.includes('generativelanguage.googleapis.com')){
       try{
         const m = urlStr.match(/models\/([^:]+):generateContent/);
-        const model = m ? decodeURIComponent(m[1]) : 'gemini-2.0-flash';
+        const model = m ? decodeURIComponent(m[1]) : 'gemini-3.8-flash';
         let body = {};
         try{ body = JSON.parse((opts && opts.body) || '{}'); }catch{}
         const parts = (body && body.contents && body.contents[0] && body.contents[0].parts) || [];
@@ -1290,7 +1290,7 @@ window.addEventListener('DOMContentLoaded', function(){
 
             let promptText = `Bertindaklah sebagai OCR ekstraksi nota profesional. Ekstrak foto nota ini dalam JSON valid tanpa markdown dengan struktur: ${promptStructure}. ATURAN OTOMATIS (PENTING): JANGAN tentukan jumlah kolom. Baca header ASLI dari foto apa adanya dan jadikan headers (boleh 2,3,4,5,6+ kolom). Tiap baris rows panjangnya SAMA dengan headers. Tiap sel boleh TEKS atau ANGKA sesuai isi foto - JANGAN buang kolom teks (misal Jenis/Nama/Keterangan). TAPI jika satu sel berisi HURUF + ANGKA (misal 'AB123', 'Cumi 250', 'Rp 1.500 X'), keluarkan ANGKA-nya saja, hurufnya dihapus (jadi 123, 250, 1500). Jika sel hanya teks tanpa angka (misal 'CUMI'), biarkan teksnya. Angka tulis tanpa Rp/titik ribuan.`;
 
-            const candidateModels = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-1.5-flash"];
+            const candidateModels = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"];
             let success = false;
             let resultData = null;
             let lastErrorMsg = "";
@@ -3243,7 +3243,6 @@ window.simpanDataKeD1 = async function(){
   finally{ if(btn){ btn.disabled=false; btn.innerHTML='<i data-lucide="save" class="w-4 h-4"></i> Simpan Data ke D1'; try{ lucide.createIcons(); }catch{} } }
 };
 
-// [LOCK] Override simpanApiKeyV14: simpan ke LocalStorage (lama) + JUGA ke D1 /api/settings (proxy baca dari D1).
 (function(){
   const _origSimpan = window.simpanApiKeyV14;
   window.simpanApiKeyV14 = async function(){

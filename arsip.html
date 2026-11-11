@@ -47,7 +47,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#0b0f17;color:#f3f4f6
     if(urlStr.includes('generativelanguage.googleapis.com')){
       try{
         const m = urlStr.match(/models\/([^:]+):generateContent/);
-        const model = m ? decodeURIComponent(m[1]) : 'gemini-2.0-flash';
+        const model = m ? decodeURIComponent(m[1]) : 'gemini-3.8-flash';
         let body = {};
         try{ body = JSON.parse((opts && opts.body) || '{}'); }catch{}
         const parts = (body && body.contents && body.contents[0] && body.contents[0].parts) || [];
@@ -1242,7 +1242,6 @@ document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getEl
 (function(){ window.kembaliKeOCR=function(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); return false; }; })();
 </script>
 
-<!-- MSGBOX Konfirmasi Hapus [LOCK] -->
 <div id="msgboxOverlay" class="fixed inset-0 z-[100001] bg-black/70 flex items-center justify-center px-4" style="display:none">
   <div class="bg-gray-900 border border-amber-500/40 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
     <div class="flex items-center gap-3 mb-3">
@@ -1396,7 +1395,6 @@ window.hapusSemuaArsip = async function(){
 
 
 <script>
-// [LOCK] GABUNGAN -> D1 (override LocalStorage). Cache in-memory, backend D1.
 window._gabunganCache = [];
 window.loadGabunganTersimpan = async function(){
   try{

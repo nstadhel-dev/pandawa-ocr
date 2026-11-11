@@ -35,7 +35,7 @@
     if(urlStr.includes('generativelanguage.googleapis.com')){
       try{
         const m = urlStr.match(/models\/([^:]+):generateContent/);
-        const model = m ? decodeURIComponent(m[1]) : 'gemini-2.0-flash';
+        const model = m ? decodeURIComponent(m[1]) : 'gemini-3.8-flash';
         let body = {};
         try{ body = JSON.parse((opts && opts.body) || '{}'); }catch{}
         const parts = (body && body.contents && body.contents[0] && body.contents[0].parts) || [];
@@ -242,7 +242,6 @@ window.addEventListener('DOMContentLoaded', function(){
     </div>
   </div>
 </div>
-<!-- SET GEMINI API KEY (D1) [LOCK] - Key disimpan di D1 settings, bukan LocalStorage. Proxy /api/gemini baca dari sini. -->
 <div class="bg-gray-900 border border-amber-500/30 rounded-2xl p-4 mb-5">
   <h2 class="text-sm font-bold text-amber-300 mb-1">🔑 Setting Gemini API Key (D1) — 3 Key</h2>
   <p class="text-[11px] text-gray-500 mb-2">Key disimpan di <b class="text-gray-300">D1</b> (aman, tidak pernah ke browser). Proxy <b class="text-gray-300">/api/gemini</b> baca key dari D1. <b class="text-amber-300">Hanya Admin</b> bisa simpan. Kalau key belum diset di D1, Ekstrak Data gagal: "Gemini API Key belum diset". <b class="text-gray-300">3 key = 3 cadangan (rotasi otomatis kalau quota 1 key habis).</b></p>
@@ -259,7 +258,6 @@ window.addEventListener('DOMContentLoaded', function(){
   <p class="text-[10px] text-gray-500 mt-2">⚠️ Jangan hapus tabel <b class="text-red-400">Settings</b> di bawah kalau tidak mau key hilang. Kalau terhapus, set ulang key di sini.</p>
 </div>
 
-<!-- D1 - STORAGE + BACKUP + RESTORE + HAPUS TABEL [LOCK] -->
 <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 mb-5">
   <h2 class="text-sm font-bold text-amber-300 mb-3">☁️ Database D1 (Cloudflare) — Backup, Restore & Storage</h2>
   <div id="d1WarnBox" class="hidden mb-3 p-3 rounded-xl border border-red-500/50 bg-red-500/10">
@@ -571,7 +569,6 @@ window.doLogin = async function(){
 
 
 <script>
-// [LOCK] USER CRUD -> D1 /api/users (override LocalStorage). Cache in-memory, backend D1.
 window._usersCache = [];
 window.loadUsers = async function(){
   try{
@@ -650,7 +647,6 @@ try{
 
 
 <script>
-// [LOCK] D1 - Backup semua tabel, Restore, Storage, Hapus isi tabel. Override versi lama LocalStorage.
 window.d1StatsCache = null;
 window.fmtBytesD1 = function(b){ if(!b && b!==0) return '-'; if(b<1024) return b+' B'; if(b<1024*1024) return (b/1024).toFixed(1)+' KB'; if(b<1024*1024*1024) return (b/1024/1024).toFixed(2)+' MB'; return (b/1024/1024/1024).toFixed(2)+' GB'; };
 window.loadD1Storage = async function(){
@@ -785,7 +781,6 @@ try{
   if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', ()=>{ if(typeof loadD1Storage==='function') loadD1Storage(); }); }
   else { if(typeof loadD1Storage==='function') loadD1Storage(); }
 }catch{}
-// [LOCK] Set Gemini API Key -> D1 /api/settings.
 window.cekGeminiKeyStatus = async function(){
   const el = document.getElementById('geminiKeyStatus');
   if(el) el.textContent = 'Memeriksa status key...';

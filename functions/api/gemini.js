@@ -12,10 +12,10 @@ export async function onRequestPost({ request, env }){
     const b = await request.json().catch(()=>({}));
     const image = cleanStr(b.image_base64 || '', 2000000); // base64 foto (tanpa prefix data:)
     const prompt = cleanStr(b.prompt || '', 10000);
-    let model = cleanStr(b.model || 'gemini-2.0-flash', 50);
+    let model = cleanStr(b.model || 'gemini-3.8-flash', 50);
     // Whitelist model (cegah SSRF / model aneh)
-    const allowedModels = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-lite'];
-    if(!allowedModels.includes(model)) model = 'gemini-2.0-flash';
+    const allowedModels = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3-flash', 'gemini-3-pro'];
+    if(!allowedModels.includes(model)) model = 'gemini-3.8-flash';
     if(!image) return jsonResp({ ok:false, error:'image_base64 wajib' }, 400, request);
     if(!prompt) return jsonResp({ ok:false, error:'prompt wajib' }, 400, request);
     // Ambil key dari D1 (atau env GEMINI_API_KEY jika diset)
