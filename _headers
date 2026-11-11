@@ -1,0 +1,9 @@
+# PANDAWA OCR - Security Headers (Cloudflare Pages)
+# File ini otomatis dibaca Pages. Jangan hapus.
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(self), microphone=(), geolocation=(), payment=()
+  Content-Security-Policy: default-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://cdnjs.cloudflare.com https://fonts.googleapis.com https://fonts.gstatic.com https://generativelanguage.googleapis.com; img-src 'self' data: blob: https:; media-src 'self' blob: data:; connect-src 'self' https://generativelanguage.googleapis.com;
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<script>
+// WAJIB D1: LocalStorage HANYA untuk Gemini API Key (biar tanpa proxy). Selebihnya WAJIB D1.
+(function(){
+  var ALLOWED = ['PANDAWA_API_KEYS_V14','PANDAWA_API_KEY_1','PANDAWA_API_KEY_2','PANDAWA_API_KEY_3','PANDAWA_KEYS_STD_V14','PANDAWA_API_KEYS_COUNT','pandawa_gemini_key'];
+  try{
+    var _get = Storage.prototype.getItem;
+    var _set = Storage.prototype.setItem;
+    var _rem = Storage.prototype.removeItem;
+    Storage.prototype.getItem = function(k){
+      if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return null;
+      return _get.call(this, k);
+    };
+    Storage.prototype.setItem = function(k, v){
+      if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return;
+      return _set.call(this, k, v);
+    };
+    Storage.prototype.removeItem = function(k){
+      if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return;
+      return _rem.call(this, k);
+    };
+  }catch(e){}
+})();
+</script>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kelola User - PANDAWA OCR</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="min-h-screen bg-gray-950 text-gray-100 pb-12">
+<!-- PANDAWA SECURITY + D1 BRIDGE (Deploy) - BUKAN worker.js, ini script di HTML -->
+
+
+<!-- PANDAWA PRELOAD AWAL - tampil diawal agar keliatan keren, hilang otomatis. Tidak ganggu logika kunci. -->
+<style>
+#pandawaPreload{position:fixed;inset:0;z-index:99999;background:radial-gradient(1200px 600px at 50% 0%, #1a2233 0%, #0b0f17 60%, #05070c 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;transition:opacity .55s ease, visibility .55s}
+#pandawaPreload.hide{opacity:0;visibility:hidden;pointer-events:none}
+.pdw-logo{font-size:34px;font-weight:900;letter-spacing:5px;background:linear-gradient(90deg,#fde68a,#d4af37,#f59e0b,#fde68a);background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:pdwshine 1.6s linear infinite}
+@keyframes pdwshine{to{background-position:200% center}}
+.pdw-sub{font-size:10px;letter-spacing:5px;color:#9ca3af}
+.pdw-bar{width:230px;height:6px;background:#1f2937;border-radius:999px;overflow:hidden}
+.pdw-bar i{display:block;height:100%;width:38%;background:linear-gradient(90deg,#fde68a,#d4af37);border-radius:999px;animation:pdwload 1.05s ease-in-out infinite}
+@keyframes pdwload{0%{transform:translateX(-110%)}100%{transform:translateX(620%)}}
+.pdw-foot{font-size:10px;color:#6b7280;letter-spacing:1px}
+</style>
+<div id="pandawaPreload"><div class="pdw-logo">PANDAWA GROUP</div><div class="pdw-sub">OCR &bull; ARSIP NOTA &bull; D1</div><div class="pdw-bar"><i></i></div><div class="pdw-foot" id="pdwLoadText">Memuat aplikasi...</div></div>
+<script>
+(function(){
+  // PRELOAD DIJAMIN TAMPIL: minimal 1600ms sejak halaman dibuka, tidak peduli secepat apa event 'load' ke-fire (cache).
+  // Sebelumnya: load + 700ms, jadi kalau load dari cache preload cuma kedip -> kelihatan seperti tidak tampil.
+  var _preloadStart = Date.now();
+  var _preloadMin = 1600;
+  function hidePreload(){
+    var p=document.getElementById('pandawaPreload');
+    if(!p || p.classList.contains('hide')) return;
+    var sisa = _preloadMin - (Date.now()-_preloadStart);
+    if(sisa>0){ setTimeout(hidePreload, sisa); return; }
+    p.classList.add('hide'); setTimeout(function(){ if(p) p.remove(); },600);
+  }
+  window.addEventListener('load', function(){ setTimeout(hidePreload, 300); });
+  // Fallback: preload tidak boleh nyangkut walau load lama / load tidak ke-fire
+  setTimeout(hidePreload, 5000);
+  // Tes manual: ketik lihatPreloadLagi() di Console untuk tampilkan preload lagi 1,6 detik
+  window.lihatPreloadLagi = function(){
+    var lama=document.getElementById('pandawaPreload'); if(lama) lama.remove();
+    var d=document.createElement('div'); d.id='pandawaPreload';
+    d.innerHTML='<div class="pdw-logo">PANDAWA GROUP</div><div class="pdw-sub">OCR \u2022 ARSIP NOTA \u2022 D1</div><div class="pdw-bar"><i></i></div><div class="pdw-foot">Memuat aplikasi...</div>';
+    document.body.appendChild(d); _preloadStart=Date.now(); setTimeout(hidePreload, 300);
+  };
+  // Teks berjalan biar hidup
+  var msgs=['Memuat aplikasi...','Menyiapkan tabel nota...','Menghubungkan Database...','Siap!'];
+  var i=0; var t=setInterval(function(){ var el=document.getElementById('pdwLoadText'); if(!el){ clearInterval(t); return; } el.textContent=msgs[i%msgs.length]; i++; if(i>6) clearInterval(t); },500);
+})();
+</script>
+
+<!-- REV29 - LOGIN + ROLE -->
+<div id="loginOverlay" class="fixed inset-0 z-[100000] bg-gray-950/95 flex items-center justify-center" style="display:none">
+  <div class="bg-gray-900 border border-amber-500/30 rounded-2xl p-6 w-full max-w-sm mx-4">
+    <div class="flex items-center gap-3 mb-4"><img src="data:image/png;base64,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" alt="Pandawa" class="h-12 w-auto"><div><h2 class="text-lg font-bold text-amber-300">PANDAWA OCR</h2><p class="text-xs text-gray-400">Silakan login</p></div></div>
+    <label class="text-xs text-gray-400">Username</label>
+    <input id="loginUser" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-amber-500 text-gray-100" placeholder="admin" autocomplete="username">
+    <label class="text-xs text-gray-400">Password</label>
+    <input id="loginPass" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-amber-500 text-gray-100" placeholder="12345" autocomplete="current-password">
+    <p id="loginError" class="text-xs text-red-400 mb-2 hidden">Username / password salah</p>
+    <button onclick="doLogin()" class="w-full bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold py-2 rounded-lg text-sm">Login</button>
+    <p class="text-[10px] text-gray-500 mt-3 text-center">Default: admin / 12345 — ganti password di halaman ini</p>
+  </div>
+</div>
+<div id="aksesDitolakOverlay" class="fixed inset-0 z-[100000] bg-gray-950/95 flex items-center justify-center" style="display:none">
+  <div class="bg-gray-900 border border-red-500/40 rounded-2xl p-6 w-full max-w-sm mx-4 text-center">
+    <div class="text-4xl mb-2">⛔</div><h2 class="text-lg font-bold text-red-300 mb-1">Akses Ditolak</h2><p class="text-xs text-gray-400 mb-4">Kelola User hanya untuk Admin.<br>Role kamu: <span id="aksesRoleTxt" class="text-amber-300 font-bold"></span></p>
+    <button onclick="keHalamanUtama()" class="w-full bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold py-2 rounded-lg text-sm">Ke Halaman Utama</button><button onclick="keArsip()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-amber-500/30 hover:border-amber-400 text-amber-300 text-xs font-semibold rounded-lg">📁 Arsip Nota</button>
+  </div>
+</div>
+<!-- Header -->
+<header class="border-b border-amber-500/20 bg-gray-900/60 backdrop-blur sticky top-0 z-50">
+  <div class="max-w-5xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+    <div class="flex items-center space-x-3">
+      <img src="data:image/png;base64,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" alt="Pandawa Group" class="h-11 w-auto">
+      <div>
+        <h1 class="text-xl font-bold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-500">KELOLA USER</h1>
+        <p class="text-xs text-gray-400">Tambah • Edit • Hapus • Ganti Password</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="userInfoBar" class="hidden sm:flex items-center gap-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs text-gray-300"></span>
+      <button onclick="keHalamanUtama()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-amber-500/30 hover:border-amber-400 text-amber-300 text-xs font-semibold rounded-lg">← Halaman Utama</button>
+    </div>
+  </div>
+</header>
+<main class="max-w-5xl mx-auto px-4 py-6">
+  <!-- Info -->
+  <div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-xs text-amber-200 mb-4">
+    👑 <b>Admin</b> bisa akses semuanya (Halaman Utama, Arsip, Kelola User). 👤 <b>User</b> hanya Halaman Utama, tombol <b>Simpan Data</b> nonaktif.<br>
+    Default login: <b>admin / 12345</b> — ganti password admin lewat tombol <b>Edit</b> di bawah.
+  </div>
+  <!-- REV30 - STORAGE DATABASE (LocalStorage + D1) -->
+<div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 mb-5">
+  <div class="flex items-center justify-between mb-3"><h2 class="text-sm font-bold text-amber-300">💾 Storage Database</h2><div class="flex gap-2 flex-wrap"><button onclick="hapusLocalStorage(false)" class="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-bold rounded-lg" title="Hapus Arsip/Antrian/Key/dll, User & Sesi dipertahankan">🗑️ Hapus LocalStorage</button><button onclick="hapusLocalStorage(true)" class="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs font-bold rounded-lg" title="Hapus SEMUA termasuk User & Sesi (logout)">🗑️ Hapus SEMUA</button><button onclick="refreshStorage()" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-bold rounded-lg">🔄 Refresh</button></div></div>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <!-- LocalStorage -->
+    <div class="bg-gray-950 border border-gray-800 rounded-xl p-3">
+      <h3 class="text-xs font-bold text-gray-200 mb-1">📱 LocalStorage (Browser ini)</h3>
+      <p class="text-[11px] text-gray-500 mb-2">Data tersimpan di browser ini. Batas umum LocalStorage ±5 MB.</p>
+      <div class="w-full bg-gray-800 rounded-full h-2.5 mb-1"><div id="lsBar" class="bg-amber-500 h-2.5 rounded-full" style="width:0%"></div></div>
+      <p id="lsSummary" class="text-xs text-gray-300 mb-2">Menghitung...</p>
+      <div class="overflow-x-auto max-h-48 overflow-y-auto"><table class="w-full text-[11px]"><thead><tr class="text-amber-400"><th class="p-1.5 text-left">KEY</th><th class="p-1.5 text-right">UKURAN</th><th class="p-1.5 text-right">ISI</th><th class="p-1.5 text-center">AKSI</th></tr></thead><tbody id="lsTableBody"></tbody></table></div>
+    </div>
+    <!-- D1 -->
+    <div class="bg-gray-950 border border-gray-800 rounded-xl p-3">
+      <h3 class="text-xs font-bold text-gray-200 mb-1">☁️ Database D1 (Cloudflare)</h3>
+      <p class="text-[11px] text-gray-500 mb-2">Diukur dari isi tabel nota. Batas D1 hanya ±5 GB.</p>
+      <div class="w-full bg-gray-800 rounded-full h-2.5 mb-1"><div id="d1Bar" class="bg-emerald-500 h-2.5 rounded-full" style="width:0%"></div></div>
+      <p id="d1Summary" class="text-xs text-gray-300 mb-2">Menghitung...</p>
+      <div id="d1Detail" class="text-[11px] text-gray-400 space-y-1"></div>
+      <p class="text-[10px] text-gray-500 mt-2">* Estimasi dari data yang terbaca. Ukuran disk D1 sebenarnya dihitung Cloudflare. Kalau file dibuka langsung (file://), D1 tidak terjangkau — yang tampil hanya LocalStorage.</p>
+    </div>
+  </div>
+</div>
+<!-- REV30 - BACKUP & RESTORE -->
+<div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 mb-5">
+  <h2 class="text-sm font-bold text-amber-300 mb-3">📦 Backup & Restore Database</h2>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div class="bg-gray-950 border border-gray-800 rounded-xl p-3">
+      <h3 class="text-xs font-bold text-gray-200 mb-1">⬇️ Backup Semua Database</h3>
+      <p class="text-[11px] text-gray-500 mb-2">Download semua data (User, Arsip, Gabungan, API Key, Antrian, dll) jadi 1 file JSON. Simpan file ini sebagai cadangan.</p>
+      <p id="backupInfo" class="text-[11px] text-gray-400 mb-2">-</p>
+      <button onclick="backupDatabase()" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-gray-950 text-xs font-bold rounded-lg">⬇️ Download Backup (.json)</button>
+    </div>
+    <div class="bg-gray-950 border border-gray-800 rounded-xl p-3">
+      <h3 class="text-xs font-bold text-gray-200 mb-1">⬆️ Restore Database</h3>
+      <p class="text-[11px] text-gray-500 mb-2">Pilih file backup (.json) untuk kembalikan semua data. <b class="text-red-400">Data yang ada sekarang akan ditimpa!</b></p>
+      <input id="restoreFile" type="file" accept=".json,application/json" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs mb-2 text-gray-300">
+      <p id="restorePreview" class="text-[11px] text-gray-400 mb-2">Belum ada file dipilih.</p>
+      <button onclick="restoreDatabase()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-gray-950 text-xs font-bold rounded-lg">⬆️ Restore Sekarang</button>
+    </div>
+  </div>
+</div>
+<!-- Form Tambah / Edit -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 mb-5">
+    <h2 id="formTitle" class="text-sm font-bold text-amber-300 mb-3">➕ Tambah User Baru</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div><label class="text-xs text-gray-400">Username *</label><input id="fUsername" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-amber-500" placeholder="contoh: budi"></div>
+      <div><label class="text-xs text-gray-400">Nama Lengkap</label><input id="fNama" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-amber-500" placeholder="contoh: Budi Santoso"></div>
+      <div><label class="text-xs text-gray-400">Password <span id="fPassHint" class="text-gray-500">(wajib untuk user baru)</span></label><input id="fPassword" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-amber-500" placeholder="••••••"></div>
+      <div><label class="text-xs text-gray-400">Role *</label><select id="fRole" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-amber-500"><option value="user">👤 User (hanya Halaman Utama)</option><option value="admin">👑 Admin (semua akses)</option></select></div>
+    </div>
+    <div class="flex gap-2 mt-4">
+      <button onclick="simpanUser()" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-gray-950 text-xs font-bold rounded-lg">💾 Simpan</button>
+      <button onclick="resetForm()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-bold rounded-lg">Batal / Reset</button>
+    </div>
+  </div>
+  <!-- Tabel User -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-800"><h2 class="text-sm font-bold text-amber-300">👥 Daftar User</h2><span id="userCount" class="text-xs text-gray-400"></span></div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead><tr class="bg-gray-950 text-amber-400"><th class="p-3 text-left">USERNAME</th><th class="p-3 text-left">NAMA</th><th class="p-3 text-center">ROLE</th><th class="p-3 text-center">DIBUAT</th><th class="p-3 text-center">AKSI</th></tr></thead>
+        <tbody id="userTableBody"></tbody>
+      </table>
+    </div>
+    <p id="userEmpty" class="text-xs text-gray-500 text-center py-6 hidden">Belum ada user.</p>
+  </div>
+  <p class="text-[11px] text-gray-500 mt-3">User tersimpan di browser (LocalStorage). Password tidak ditampilkan di tabel. Untuk ganti password admin, klik Edit pada baris admin, isi password baru, lalu Simpan.</p>
+</main>
+<script>
+// ===== PANDAWA AUTH REV29 - Kelola User (Admin saja) =====
+const AUTH_USERS_KEY='PANDAWA_USERS_V14';
+const AUTH_SESSION_KEY='PANDAWA_SESSION_V14';
+function getUsers(){ try{ let u=JSON.parse(localStorage.getItem(AUTH_USERS_KEY)||'[]'); if(!u.length){ u=[{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} } return u; }catch{ return [{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; } }
+function saveUsers(u){ try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} }
+function getSession(){ try{ const h=window.location.hash||''; if(h.startsWith('#s=')){ let b=h.slice(3).replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4) b+='='; const s=JSON.parse(decodeURIComponent(escape(atob(b)))); if(s && s.username){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} try{ history.replaceState({},'',window.location.pathname+window.location.search); }catch{} return s; } } }catch{} try{ const s=JSON.parse(sessionStorage.getItem(AUTH_SESSION_KEY)||'null'); if(s && s.username) return s; }catch{} return null; }
+function setSession(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
+function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
+function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
+function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
+function fileSaudara(target){ try{ const f=(window.location.pathname.split('/').pop()||''); const m=f.match(/^(.*?)(arsip|index|kelolauser)([-_]REV\d+)?(\.html?)$/i); if(m){ const pref=m[1]||''; const rev=m[3]||''; const ext=m[4]||'.html'; const isCap = target==='index' ? /^Arsip/.test(f) : target==='arsip' ? /^Index/.test(f) : /^Index/.test(f); const nama = isCap ? (target==='index'?'Index':target==='arsip'?'Arsip':'KelolaUser') : target; return pref + nama + rev + ext; } }catch{} return target+'.html'; }
+function showLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
+function hideLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='none'; }
+function showAksesDitolak(role){ const o=document.getElementById('aksesDitolakOverlay'); const t=document.getElementById('aksesRoleTxt'); if(t) t.textContent=role||'-'; if(o) o.style.display='flex'; }
+function doLogin(){ const u=(document.getElementById('loginUser')?.value||'').trim(); const p=(document.getElementById('loginPass')?.value||''); const s=loginUser(u,p); if(!s){ const e=document.getElementById('loginError'); if(e) e.classList.remove('hidden'); return; } const e=document.getElementById('loginError'); if(e) e.classList.add('hidden'); hideLoginOverlay(); cekAkses(s); }
+function doLogout(){ clearSession(); location.reload(); }
+function keHalamanUtama(){ const s=getSession(); window.location.href='index.html'+(s?sessionHash(s):''); } // REV29: Index-nya REV29, bukan REV1, jadi hardcode (fileSaudara salah kalau REV beda)
+function cekAkses(s){ if(!s) return; const bar=document.getElementById('userInfoBar'); if(bar){ bar.innerHTML='<span class="text-amber-300 font-bold">'+(s.nama||s.username)+'</span><span class="text-gray-500">('+s.role+')</span><button onclick="doLogout()" class="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold">Logout</button>'; } if(s.role!=='admin'){ showAksesDitolak(s.role); } else { renderUserTable(); refreshStorage(); } }
+document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getElementById('loginOverlay') && document.getElementById('loginOverlay').style.display!=='none' && (e.target.id==='loginPass'||e.target.id==='loginUser')) doLogin(); });
+// ===== KELOLA USER =====
+let editUsername=null; // username yang sedang diedit (null = tambah baru)
+function esc(v){ return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtTgl(ts){ if(!ts) return '-'; const d=new Date(ts); return String(d.getDate()).padStart(2,'0')+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+d.getFullYear(); }
+function renderUserTable(){
+  const users=getUsers();
+  const tb=document.getElementById('userTableBody'); const empty=document.getElementById('userEmpty'); const cnt=document.getElementById('userCount');
+  if(cnt) cnt.textContent=users.length+' user';
+  if(!users.length){ if(tb) tb.innerHTML=''; if(empty) empty.classList.remove('hidden'); return; }
+  if(empty) empty.classList.add('hidden');
+  const s=getSession();
+  tb.innerHTML=users.map(u=>{
+    const isMe = s && s.username===u.username;
+    const roleBadge = u.role==='admin' ? '<span class="px-2 py-0.5 bg-amber-500/20 text-amber-300 rounded font-bold">👑 ADMIN</span>' : '<span class="px-2 py-0.5 bg-gray-700 text-gray-300 rounded font-bold">👤 USER</span>';
+    return '<tr class="border-b border-gray-800 hover:bg-gray-800/50"><td class="p-3 font-bold text-gray-100">'+esc(u.username)+(isMe?' <span class="text-[10px] text-amber-300">(kamu)</span>':'')+'</td><td class="p-3 text-gray-300">'+esc(u.nama||'-')+'</td><td class="p-3 text-center">'+roleBadge+'</td><td class="p-3 text-center text-gray-400">'+fmtTgl(u.createdAt)+'</td><td class="p-3 text-center"><button onclick="editUser(\''+esc(u.username)+'\')" class="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded text-[11px] font-bold mr-1">✏️ Edit</button><button onclick="hapusUser(\''+esc(u.username)+'\')" class="px-2 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold">🗑️ Hapus</button></td></tr>';
+  }).join('');
+}
+function resetForm(){ editUsername=null; const t=document.getElementById('formTitle'); if(t) t.textContent='➕ Tambah User Baru'; const h=document.getElementById('fPassHint'); if(h) h.textContent='(wajib untuk user baru)'; ['fUsername','fNama','fPassword'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; }); const r=document.getElementById('fRole'); if(r) r.value='user'; const u=document.getElementById('fUsername'); if(u) u.disabled=false; }
+function editUser(username){
+  const users=getUsers(); const u=users.find(x=>x.username===username); if(!u) return;
+  editUsername=username;
+  const t=document.getElementById('formTitle'); if(t) t.textContent='✏️ Edit User: '+username+' (kosongkan password kalau tidak diganti)';
+  const h=document.getElementById('fPassHint'); if(h) h.textContent='(kosongkan kalau tidak ganti password)';
+  document.getElementById('fUsername').value=u.username; document.getElementById('fUsername').disabled=true;
+  document.getElementById('fNama').value=u.nama||''; document.getElementById('fPassword').value=''; document.getElementById('fRole').value=u.role||'user';
+  document.getElementById('fNama').focus();
+}
+function simpanUser(){
+  const username=(document.getElementById('fUsername')?.value||'').trim();
+  const nama=(document.getElementById('fNama')?.value||'').trim();
+  const pass=(document.getElementById('fPassword')?.value||'');
+  const role=document.getElementById('fRole')?.value||'user';
+  if(!username){ alert('Username wajib diisi'); return; }
+  if(!/^[a-zA-Z0-9_.-]+$/.test(username)){ alert('Username hanya boleh huruf, angka, _ . -'); return; }
+  const users=getUsers();
+  if(editUsername){
+    const u=users.find(x=>x.username===editUsername); if(!u){ alert('User tidak ditemukan'); return; }
+    u.nama=nama||u.nama; u.role=role; if(pass) u.password=pass;
+    saveUsers(users); alert('User "'+username+'" berhasil diupdate'+(pass?' (password diganti)':'')+'.'); resetForm(); renderUserTable();
+  } else {
+    if(!pass){ alert('Password wajib diisi untuk user baru'); return; }
+    if(users.some(x=>x.username===username)){ alert('Username "'+username+'" sudah dipakai'); return; }
+    users.push({username, password:pass, role, nama:nama||username, createdAt:Date.now()});
+    saveUsers(users); alert('User "'+username+'" berhasil ditambah (role: '+role+').'); resetForm(); renderUserTable();
+  }
+}
+function hapusUser(username){
+  const users=getUsers(); const s=getSession();
+  if(s && s.username===username){ alert('Tidak bisa hapus akun sendiri (yang sedang login).'); return; }
+  const admins=users.filter(x=>x.role==='admin');
+  const target=users.find(x=>x.username===username);
+  if(target && target.role==='admin' && admins.length<=1){ alert('Tidak bisa hapus admin terakhir. Tambah admin lain dulu.'); return; }
+  if(!confirm('Hapus user "'+username+'"?')) return;
+  saveUsers(users.filter(x=>x.username!==username));
+  if(editUsername===username) resetForm();
+  renderUserTable(); alert('User "'+username+'" dihapus.');
+}
+// ===== REV30 - BACKUP / RESTORE / STORAGE =====
+function fmtBytes(b){ if(!b && b!==0) return '-'; if(b<1024) return b+' B'; if(b<1024*1024) return (b/1024).toFixed(1)+' KB'; if(b<1024*1024*1024) return (b/1024/1024).toFixed(2)+' MB'; return (b/1024/1024/1024).toFixed(2)+' GB'; }
+function getAllPandawaKeys(){ const out=[]; try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k && k.startsWith('PANDAWA_')) out.push(k); } }catch{} return out.sort(); }
+function getKeyInfo(key){ try{ const v=localStorage.getItem(key)||''; let count='-'; try{ const j=JSON.parse(v); if(Array.isArray(j)) count=j.length+' item'; else if(j && typeof j==='object') count=Object.keys(j).length+' field'; }catch{} return { key, bytes:(new Blob([v])).size, value:v, count }; }catch{ return { key, bytes:0, value:'', count:'-' }; } }
+function refreshStorage(){ // LocalStorage
+  const keys=getAllPandawaKeys(); let total=0; const rows=keys.map(k=>{ const info=getKeyInfo(k); total+=info.bytes; return info; }).sort((a,b)=>b.bytes-a.bytes);
+  const pct=Math.min(100, (total/(5*1024*1024))*100);
+  const bar=document.getElementById('lsBar'); if(bar) bar.style.width=pct.toFixed(1)+'%';
+  const sum=document.getElementById('lsSummary'); if(sum) sum.innerHTML='<b>'+fmtBytes(total)+'</b> dari ±5 MB ('+pct.toFixed(1)+'%) • '+keys.length+' key • Sisa ±'+fmtBytes(Math.max(0, 5*1024*1024-total));
+  const tb=document.getElementById('lsTableBody'); if(tb) tb.innerHTML=rows.map(r=>'<tr class="border-b border-gray-800"><td class="p-1.5 text-gray-300 break-all">'+esc(r.key)+'</td><td class="p-1.5 text-right text-gray-300">'+fmtBytes(r.bytes)+'</td><td class="p-1.5 text-right text-gray-400">'+esc(r.count)+'</td><td class="p-1.5 text-center"><button onclick="hapusSatuKeyLocalStorage(\''+esc(r.key)+'\')" class="px-1.5 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold" title="Hapus key ini">🗑️</button></td></tr>').join('')||'<tr><td colspan="4" class="p-2 text-center text-gray-500">Tidak ada data PANDAWA_</td></tr>';
+  const bi=document.getElementById('backupInfo'); if(bi) bi.textContent='Siap backup: '+keys.length+' key, total '+fmtBytes(total)+'.';
+  // D1
+  refreshD1Storage();
+}
+async function refreshD1Storage(){
+  const sum=document.getElementById('d1Summary'); const det=document.getElementById('d1Detail'); const bar=document.getElementById('d1Bar');
+  let qLen=0; try{ const q=JSON.parse(localStorage.getItem('PANDAWA_QUEUE_V14')||'[]'); qLen=Array.isArray(q)?q.length:0; }catch{}
+  if(sum) sum.textContent='Menghubungi D1...';
+  if(det) det.innerHTML='<p>Antrian sync (belum terkirim ke D1): <b class="text-amber-300">'+qLen+'</b></p>';
+  try{
+    const res=await fetch('/api/nota', { method:'GET' });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const j=await res.json(); const arr=Array.isArray(j.data)?j.data:(Array.isArray(j)?j:[]);
+    let estBytes=0; let fotoBytes=0; let itemCount=0;
+    arr.forEach(n=>{ const s=JSON.stringify(n||{}); estBytes+= (new Blob([s])).size; const img=String(n.image_base64||n.image_url||''); fotoBytes+= (new Blob([img])).size; if(Array.isArray(n.items)) itemCount+=n.items.length; });
+    const pct=Math.min(100, (estBytes/(5*1024*1024*1024))*100);
+    if(bar) bar.style.width=Math.max(pct, 0.1)+'%';
+    if(sum) sum.innerHTML='<b>'+fmtBytes(estBytes)+'</b> estimasi dari '+arr.length+' nota • Sisa ±'+fmtBytes(5*1024*1024*1024-estBytes)+' dari 5 GB (Free)';
+    if(det) det.innerHTML='<p>Nota di D1: <b class="text-emerald-300">'+arr.length+'</b></p><p>Total baris item: <b class="text-emerald-300">'+itemCount+'</b></p><p>Estimasi foto (base64): <b class="text-emerald-300">'+fmtBytes(fotoBytes)+'</b></p><p>Antrian sync (belum terkirim): <b class="text-amber-300">'+qLen+'</b></p><p>Status D1: <b class="text-emerald-300">✅ Terhubung</b></p>';
+  }catch(e){
+    if(bar) bar.style.width='0%';
+    if(sum) sum.textContent='D1 tidak terjangkau (file:// / belum deploy / offline). Yang tampil hanya LocalStorage.';
+    if(det) det.innerHTML='<p>Antrian sync (belum terkirim): <b class="text-amber-300">'+qLen+'</b></p><p>Status D1: <b class="text-red-400">❌ Tidak terjangkau</b> ('+esc(e.message||'fetch gagal')+')</p><p>Deploy ke Cloudflare Pages + D1 agar D1 terbaca.</p>';
+  }
+}
+function hapusLocalStorage(hapusSemua){
+  const keys=getAllPandawaKeys();
+  if(!keys.length){ alert('Tidak ada data PANDAWA_ di LocalStorage.'); return; }
+  if(hapusSemua){
+    if(!confirm('HAPUS SEMUA LocalStorage?\n\nSemua key PANDAWA_ ('+keys.length+' key) akan dihapus, TERMASUK user & sesi login.\nKamu akan LOGOUT dan harus login lagi (admin / 12345 kalau user ikut terhapus).\n\nLanjutkan?')) return;
+    keys.forEach(k=>{ try{ localStorage.removeItem(k); }catch{} });
+    alert('Semua LocalStorage dihapus ('+keys.length+' key). Halaman akan reload, silakan login lagi.');
+    location.reload(); return;
+  }
+  const keep=['PANDAWA_USERS_V14','PANDAWA_SESSION_V14'];
+  const hapus=keys.filter(k=>!keep.includes(k));
+  if(!hapus.length){ alert('Hanya tersisa User & Sesi. Tidak ada data lain untuk dihapus.'); return; }
+  if(!confirm('HAPUS LocalStorage?\n\nAkan dihapus '+hapus.length+' key (Arsip, Antrian, API Key, Gabungan, Data, dll).\n\nUser & sesi login DIPERTAHANKAN (kamu tetap login).\n\nLanjutkan?')) return;
+  hapus.forEach(k=>{ try{ localStorage.removeItem(k); }catch{} });
+  alert('LocalStorage dihapus: '+hapus.length+' key. User & sesi dipertahankan.');
+  refreshStorage();
+}
+function hapusSatuKeyLocalStorage(key){
+  if(key==='PANDAWA_USERS_V14'){ if(!confirm('Hapus key USER?\n\nSemua user (termasuk admin) akan hilang. Setelah ini kamu akan logout dan login default kembali jadi admin / 12345.\n\nLanjutkan?')) return; }
+  else if(key==='PANDAWA_SESSION_V14'){ if(!confirm('Hapus key SESI?\n\nKamu akan logout.\n\nLanjutkan?')) return; }
+  else { if(!confirm('Hapus key "'+key+'"?\n\nData key ini akan hilang permanen.')) return; }
+  try{ localStorage.removeItem(key); }catch(e){ alert('Gagal hapus: '+e.message); return; }
+  refreshStorage();
+  if(key==='PANDAWA_USERS_V14' || key==='PANDAWA_SESSION_V14'){ alert('Key "'+key+'" dihapus. Halaman akan reload.'); location.reload(); }
+}
+function backupDatabase(){
+  const keys=getAllPandawaKeys(); const data={};
+  keys.forEach(k=>{ try{ data[k]=localStorage.getItem(k); }catch{} });
+  const users=getUsers(); const archiveCount=(()=>{ try{ const a=JSON.parse(localStorage.getItem('PANDAWA_ARCHIVE_V14')||'[]'); return Array.isArray(a)?a.length:0; }catch{ return 0; } })();
+  const payload={ app:'PANDAWA OCR', version:'REV30', type:'PANDAWA_BACKUP', backupAt:new Date().toISOString(), backupAtLocal:new Date().toLocaleString('id-ID'), counts:{ keys:keys.length, users:users.length, archive:archiveCount }, data };
+  const blob=new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' });
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  const ts=new Date(); const pad=n=>String(n).padStart(2,'0');
+  a.href=url; a.download='PANDAWA_BACKUP_'+ts.getFullYear()+'-'+pad(ts.getMonth()+1)+'-'+pad(ts.getDate())+'_'+pad(ts.getHours())+pad(ts.getMinutes())+pad(ts.getSeconds())+'.json';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 2000);
+  alert('Backup didownload: '+keys.length+' key, '+users.length+' user, '+archiveCount+' nota arsip.');
+}
+let restorePayload=null;
+document.getElementById('restoreFile')?.addEventListener('change', function(){
+  const f=this.files && this.files[0]; const prev=document.getElementById('restorePreview'); restorePayload=null;
+  if(!f){ if(prev) prev.textContent='Belum ada file dipilih.'; return; }
+  const rd=new FileReader();
+  rd.onload=()=>{ try{ const j=JSON.parse(rd.result||''); if(!j || j.type!=='PANDAWA_BACKUP' || !j.data || typeof j.data!=='object'){ if(prev) prev.innerHTML='<span class="text-red-400">❌ File bukan backup PANDAWA (type tidak cocok).</span>'; return; } restorePayload=j; const c=j.counts||{}; const keyCount=Object.keys(j.data||{}).length; if(prev) prev.innerHTML='✅ Backup valid — Tanggal: <b>'+esc(j.backupAtLocal||j.backupAt||'-')+'</b> • Versi: '+esc(j.version||'-')+' • Key: <b>'+keyCount+'</b> • User: <b>'+(c.users??'-')+'</b> • Arsip: <b>'+(c.archive??'-')+'</b> • Siap restore.'; }catch(e){ if(prev) prev.innerHTML='<span class="text-red-400">❌ File tidak bisa dibaca (bukan JSON valid): '+esc(e.message)+'</span>'; } };
+  rd.readAsText(f);
+});
+function restoreDatabase(){
+  if(!restorePayload){ alert('Pilih file backup (.json) dulu.'); return; }
+  const keyCount=Object.keys(restorePayload.data||{}).length;
+  if(!confirm('RESTORE DATABASE?\n\nIni akan MENIMPA semua data yang ada sekarang ('+keyCount+' key dari backup tanggal '+(restorePayload.backupAtLocal||restorePayload.backupAt||'-')+').\n\nLanjutkan?')) return;
+  try{
+    // Simpan sesi saat ini agar tidak logout setelah restore
+    const sesi=getSession();
+    Object.keys(restorePayload.data||{}).forEach(k=>{ try{ if(typeof restorePayload.data[k]==='string') localStorage.setItem(k, restorePayload.data[k]); }catch(e){ console.warn('Gagal restore key', k, e); } });
+    // Kembalikan sesi (kalau backup tidak punya sesi / sesi lama)
+    if(sesi) setSession(sesi);
+    alert('Restore selesai: '+keyCount+' key dikembalikan. Halaman akan dimuat ulang.');
+    location.reload();
+  }catch(e){ alert('Restore gagal: '+e.message); }
+}
+function keArsip(){ const s=getSession(); window.location.href='arsip.html'+(s?sessionHash(s):''); }
+window.addEventListener('DOMContentLoaded', ()=>{ const s=getSession(); if(!s){ showLoginOverlay(); } else { hideLoginOverlay(); cekAkses(s); } if(window.lucide) lucide.createIcons(); });
+</script>
+</body>
+</html>
