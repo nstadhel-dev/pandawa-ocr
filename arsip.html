@@ -9,18 +9,9 @@
     var _get = Storage.prototype.getItem;
     var _set = Storage.prototype.setItem;
     var _rem = Storage.prototype.removeItem;
-    Storage.prototype.getItem = function(k){
-      if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return null;
-      return _get.call(this, k);
-    };
-    Storage.prototype.setItem = function(k, v){
-      if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return;
-      return _set.call(this, k, v);
-    };
-    Storage.prototype.removeItem = function(k){
-      if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return;
-      return _rem.call(this, k);
-    };
+    Storage.prototype.getItem = function(k){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return null; return _get.call(this, k); };
+    Storage.prototype.setItem = function(k, v){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return; return _set.call(this, k, v); };
+    Storage.prototype.removeItem = function(k){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return; return _rem.call(this, k); };
   }catch(e){}
 })();
 </script>
@@ -1265,88 +1256,6 @@ window.addEventListener('DOMContentLoaded', ()=>{ const s=getSession(); if(!s){ 
 document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getElementById('loginOverlay') && document.getElementById('loginOverlay').style.display!=='none' && (e.target.id==='loginPass'||e.target.id==='loginUser')) doLogin(); });
 (function(){ window.kembaliKeOCR=function(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); return false; }; })();
 </script>
-<script>
-// [LOCK] GABUNGAN -> D1 (override LocalStorage). Cache in-memory, backend D1.
-window._gabunganCache = [];
-window.loadGabunganTersimpan = async function(){
-  try{
-    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
-    const headers = {};
-    if(token) headers['Authorization'] = 'Bearer ' + token;
-    const res = await fetch('/api/gabungan', { headers });
-    if(res.ok){
-      const j = await res.json();
-      const arr = Array.isArray(j.data) ? j.data : [];
-      window._gabunganCache = arr;
-    }
-  }catch(e){ console.warn('Gagal load gabungan dari D1:', e); }
-  try{ if(typeof renderDetailNota==='function') renderDetailNota(); }catch{}
-};
-window.getGabunganTersimpan = function(){ return window._gabunganCache || []; };
-window.simpanGabungan = async function(){
-  if(!detailNota || !detailNota._gabungSumber){ tampilkanToast('Buka hasil gabung dulu (centang checklist lalu Gabung)','error'); return; }
-  const entry = {
-    id: String(Date.now()),
-    tanggalSimpan: new Date().toISOString().slice(0,10),
-    fitur: detailNota._gabungFitur||detailNota.feature_type,
-    no_nota: detailNota.no_nota||'',
-    tanggalNota: detailNota.tanggal||'-',
-    nama_kapal: detailNota.nama_kapal||'-',
-    jumlahNota: detailNota._gabungCount||detailNota._gabungSumber.length,
-    jumlahBaris: (detailNota.items||[]).length,
-    headers: detailNota.headers||[],
-    items: detailNota.items||[],
-    _gabungSumber: detailNota._gabungSumber||[],
-    _gabungDari: detailNota._gabungDari||[]
-  };
-  try{
-    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
-    const headers = { 'Content-Type':'application/json' };
-    if(token) headers['Authorization'] = 'Bearer ' + token;
-    const res = await fetch('/api/gabungan', { method:'POST', headers, body: JSON.stringify(entry) });
-    const text = await res.text();
-    let j = {};
-    try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
-    if(!res.ok || j.ok === false){
-      let msg = j.error || j.message || ('HTTP ' + res.status);
-      if(res.status===401) msg = 'Sesi habis (401). Logout lalu login lagi.';
-      tampilkanToast('Gagal simpan gabungan ke D1: ' + msg, 'error');
-      return;
-    }
-    window._gabunganCache.unshift(entry);
-    tampilkanToast('✅ Gabungan disimpan ke D1 ('+entry.jumlahNota+' nota • '+entry.jumlahBaris+' baris)','success');
-    renderDetailNota();
-  }catch(e){
-    tampilkanToast('Gagal simpan gabungan ke D1: ' + String(e.message||e), 'error');
-  }
-};
-window.hapusGabunganTersimpan = async function(id){
-  const ok = await showMsgbox('Hapus Gabungan?', 'Hapus data gabungan tersimpan ini?', 'Ya, Hapus');
-  if(!ok) return;
-  try{
-    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
-    const headers = {};
-    if(token) headers['Authorization'] = 'Bearer ' + token;
-    const res = await fetch('/api/gabungan?id='+encodeURIComponent(id), {method:'DELETE', headers});
-    if(!res.ok && res.status!==404){
-      tampilkanToast('Gagal hapus gabungan dari D1: HTTP '+res.status,'error');
-      return;
-    }
-  }catch(e){ tampilkanToast('Gagal hapus gabungan dari D1: '+String(e.message||e),'error'); return; }
-  window._gabunganCache = (window._gabunganCache||[]).filter(x=>String(x.id)!==String(id));
-  if(typeof gabungTersimpanPage!=='undefined' && gabungTersimpanPage>Math.max(1,Math.ceil(window._gabunganCache.length/20))) gabungTersimpanPage=Math.max(1,Math.ceil(window._gabunganCache.length/20));
-  tampilkanToast('Gabungan dihapus dari D1','success');
-  renderDetailNota();
-};
-// Load gabungan dari D1 saat halaman siap (bareng loadArsip)
-try{
-  if(document.readyState==='loading'){
-    document.addEventListener('DOMContentLoaded', ()=>{ if(typeof loadGabunganTersimpan==='function') loadGabunganTersimpan(); });
-  } else {
-    if(typeof loadGabunganTersimpan==='function') loadGabunganTersimpan();
-  }
-}catch{}
-</script>
 
 <!-- MSGBOX Konfirmasi Hapus [LOCK] -->
 <div id="msgboxOverlay" class="fixed inset-0 z-[100001] bg-black/70 flex items-center justify-center px-4" style="display:none">
@@ -1363,9 +1272,10 @@ try{
   </div>
 </div>
 
-
 <!-- [LOCK] OVERRIDE FINAL - definisi di akhir menang atas definisi lama/proxy. Jangan dihapus. -->
 <script>
+
+// [LOCK] getSession/setSession -> sessionStorage
 window.getSession = function(){
   try{
     const h=window.location.hash||'';
@@ -1418,6 +1328,7 @@ window.doLogin = async function(){
     if(errEl){ errEl.textContent = 'Gagal login: ' + String(e.message||e) + ' — Cek koneksi / Functions.'; errEl.classList.remove('hidden'); }
   }
 };
+
 window.showMsgbox = function(title, message, confirmText){
   return new Promise((resolve)=>{
     const ov=document.getElementById('msgboxOverlay');
@@ -1430,11 +1341,7 @@ window.showMsgbox = function(title, message, confirmText){
     m.textContent=message||'Yakin hapus?';
     btnOk.textContent=confirmText||'Ya, Hapus';
     ov.style.display='flex';
-    const cleanup=(val)=>{
-      ov.style.display='none';
-      btnOk.onclick=null; btnCancel.onclick=null; ov.onclick=null;
-      resolve(val);
-    };
+    const cleanup=(val)=>{ ov.style.display='none'; btnOk.onclick=null; btnCancel.onclick=null; ov.onclick=null; resolve(val); };
     btnOk.onclick=()=>cleanup(true);
     btnCancel.onclick=()=>cleanup(false);
     ov.onclick=(e)=>{ if(e.target===ov) cleanup(false); };
@@ -1465,7 +1372,6 @@ window.loadArsip = async function(){
         allData=[...d1];
       }
     } else if(res.status===401){
-      console.warn('Arsip: Sesi habis (401). Logout lalu login lagi untuk lihat arsip D1.');
       if(typeof tampilkanToast==='function') tampilkanToast('Sesi habis (401). Logout lalu login lagi untuk lihat arsip D1.','error');
     }
   }catch(e){ console.warn('Gagal load arsip dari D1:', e); }
@@ -1482,10 +1388,7 @@ window.hapusSatu = async function(idx){
       const headers = {};
       if(token) headers['Authorization'] = 'Bearer ' + token;
       const res = await fetch('/api/nota?id='+encodeURIComponent(n.id), {method:'DELETE', headers});
-      if(!res.ok && res.status!==404){
-        tampilkanToast('Gagal hapus dari D1: HTTP '+res.status,'error');
-        return;
-      }
+      if(!res.ok && res.status!==404){ tampilkanToast('Gagal hapus dari D1: HTTP '+res.status,'error'); return; }
     }
   }catch(e){ tampilkanToast('Gagal hapus dari D1: '+String(e.message||e),'error'); return; }
   tampilkanToast('Nota dihapus dari D1','success');
@@ -1502,10 +1405,7 @@ window.hapusSemuaArsip = async function(){
     const ids=[...new Set(allData.map(x=>x.id).filter(Boolean))];
     let gagal=0;
     for(const id of ids){
-      try{
-        const res = await fetch('/api/nota?id='+encodeURIComponent(id), {method:'DELETE', headers});
-        if(!res.ok && res.status!==404) gagal++;
-      }catch{ gagal++; }
+      try{ const res = await fetch('/api/nota?id='+encodeURIComponent(id), {method:'DELETE', headers}); if(!res.ok && res.status!==404) gagal++; }catch{ gagal++; }
     }
     if(gagal>0){ tampilkanToast(gagal+' nota gagal dihapus dari D1. Coba lagi.','error'); loadArsip(); return; }
   }catch(e){ tampilkanToast('Gagal hapus semua: '+String(e.message||e),'error'); return; }
@@ -1513,6 +1413,59 @@ window.hapusSemuaArsip = async function(){
   tampilkanToast('Semua arsip dihapus dari D1','success');
   loadArsip();
 };
+</script>
+
+
+<script>
+// [LOCK] GABUNGAN -> D1 (override LocalStorage). Cache in-memory, backend D1.
+window._gabunganCache = [];
+window.loadGabunganTersimpan = async function(){
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = {};
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch('/api/gabungan', { headers });
+    if(res.ok){ const j = await res.json(); window._gabunganCache = Array.isArray(j.data) ? j.data : []; }
+  }catch(e){ console.warn('Gagal load gabungan dari D1:', e); }
+  try{ if(typeof renderDetailNota==='function') renderDetailNota(); }catch{}
+};
+window.getGabunganTersimpan = function(){ return window._gabunganCache || []; };
+window.simpanGabungan = async function(){
+  if(!detailNota || !detailNota._gabungSumber){ tampilkanToast('Buka hasil gabung dulu (centang checklist lalu Gabung)','error'); return; }
+  const entry = { id: String(Date.now()), tanggalSimpan: new Date().toISOString().slice(0,10), fitur: detailNota._gabungFitur||detailNota.feature_type, no_nota: detailNota.no_nota||'', tanggalNota: detailNota.tanggal||'-', nama_kapal: detailNota.nama_kapal||'-', jumlahNota: detailNota._gabungCount||detailNota._gabungSumber.length, jumlahBaris: (detailNota.items||[]).length, headers: detailNota.headers||[], items: detailNota.items||[], _gabungSumber: detailNota._gabungSumber||[], _gabungDari: detailNota._gabungDari||[] };
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = { 'Content-Type':'application/json' };
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch('/api/gabungan', { method:'POST', headers, body: JSON.stringify(entry) });
+    const text = await res.text();
+    let j = {};
+    try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+    if(!res.ok || j.ok === false){ tampilkanToast('Gagal simpan gabungan ke D1: ' + (j.error || j.message || ('HTTP ' + res.status)), 'error'); return; }
+    window._gabunganCache.unshift(entry);
+    tampilkanToast('✅ Gabungan disimpan ke D1 ('+entry.jumlahNota+' nota • '+entry.jumlahBaris+' baris)','success');
+    renderDetailNota();
+  }catch(e){ tampilkanToast('Gagal simpan gabungan ke D1: ' + String(e.message||e), 'error'); }
+};
+window.hapusGabunganTersimpan = async function(id){
+  const ok = await showMsgbox('Hapus Gabungan?', 'Hapus data gabungan tersimpan ini?', 'Ya, Hapus');
+  if(!ok) return;
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = {};
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch('/api/gabungan?id='+encodeURIComponent(id), {method:'DELETE', headers});
+    if(!res.ok && res.status!==404){ tampilkanToast('Gagal hapus gabungan dari D1: HTTP '+res.status,'error'); return; }
+  }catch(e){ tampilkanToast('Gagal hapus gabungan dari D1: '+String(e.message||e),'error'); return; }
+  window._gabunganCache = (window._gabunganCache||[]).filter(x=>String(x.id)!==String(id));
+  if(typeof gabungTersimpanPage!=='undefined' && gabungTersimpanPage>Math.max(1,Math.ceil(window._gabunganCache.length/20))) gabungTersimpanPage=Math.max(1,Math.ceil(window._gabunganCache.length/20));
+  tampilkanToast('Gabungan dihapus dari D1','success');
+  renderDetailNota();
+};
+try{
+  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', ()=>{ if(typeof loadGabunganTersimpan==='function') loadGabunganTersimpan(); }); }
+  else { if(typeof loadGabunganTersimpan==='function') loadGabunganTersimpan(); }
+}catch{}
 </script>
 
 </body>

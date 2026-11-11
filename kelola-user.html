@@ -9,18 +9,9 @@
     var _get = Storage.prototype.getItem;
     var _set = Storage.prototype.setItem;
     var _rem = Storage.prototype.removeItem;
-    Storage.prototype.getItem = function(k){
-      if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return null;
-      return _get.call(this, k);
-    };
-    Storage.prototype.setItem = function(k, v){
-      if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return;
-      return _set.call(this, k, v);
-    };
-    Storage.prototype.removeItem = function(k){
-      if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return;
-      return _rem.call(this, k);
-    };
+    Storage.prototype.getItem = function(k){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return null; return _get.call(this, k); };
+    Storage.prototype.setItem = function(k, v){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return; return _set.call(this, k, v); };
+    Storage.prototype.removeItem = function(k){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return; return _rem.call(this, k); };
   }catch(e){}
 })();
 </script>
@@ -236,25 +227,78 @@ window.addEventListener('DOMContentLoaded', function(){
       <p id="lsSummary" class="text-xs text-gray-300 mb-2">Menghitung...</p>
       <div class="overflow-x-auto max-h-48 overflow-y-auto"><table class="w-full text-[11px]"><thead><tr class="text-amber-400"><th class="p-1.5 text-left">KEY</th><th class="p-1.5 text-right">UKURAN</th><th class="p-1.5 text-right">ISI</th><th class="p-1.5 text-center">AKSI</th></tr></thead><tbody id="lsTableBody"></tbody></table></div>
     </div>
-    <!-- REV30 - BACKUP & RESTORE -->
-<div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 mb-5">
-  <h2 class="text-sm font-bold text-amber-300 mb-3">📦 Backup & Restore Database</h2>
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <!-- D1 -->
     <div class="bg-gray-950 border border-gray-800 rounded-xl p-3">
-      <h3 class="text-xs font-bold text-gray-200 mb-1">⬇️ Backup Semua Database</h3>
-      <p class="text-[11px] text-gray-500 mb-2">Download semua data (User, Arsip, Gabungan, API Key, Antrian, dll) jadi 1 file JSON. Simpan file ini sebagai cadangan.</p>
+      <h3 class="text-xs font-bold text-gray-200 mb-1">☁️ Database D1 (Cloudflare)</h3>
+      <p class="text-[11px] text-gray-500 mb-2">Diukur dari isi tabel nota. Batas D1 hanya ±5 GB.</p>
+      <div class="w-full bg-gray-800 rounded-full h-2.5 mb-1"><div id="d1Bar" class="bg-emerald-500 h-2.5 rounded-full" style="width:0%"></div></div>
+      <p id="d1Summary" class="text-xs text-gray-300 mb-2">Menghitung...</p>
+      <div id="d1Detail" class="text-[11px] text-gray-400 space-y-1"></div>
+      <p class="text-[10px] text-gray-500 mt-2">* Estimasi dari data yang terbaca. Ukuran disk D1 sebenarnya dihitung Cloudflare. Kalau file dibuka langsung (file://), D1 tidak terjangkau — yang tampil hanya LocalStorage.</p>
+    </div>
+  </div>
+</div>
+<!-- D1 - STORAGE + BACKUP + RESTORE + HAPUS TABEL [LOCK] -->
+<div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 mb-5">
+  <h2 class="text-sm font-bold text-amber-300 mb-3">☁️ Database D1 (Cloudflare) — Backup, Restore & Storage</h2>
+  <!-- Notif hampir penuh -->
+  <div id="d1WarnBox" class="hidden mb-3 p-3 rounded-xl border border-red-500/50 bg-red-500/10">
+    <p class="text-sm font-bold text-red-300">⚠️ Database hampir penuh! (<span id="d1WarnPct">-</span> terpakai)</p>
+    <p class="text-[11px] text-red-200/80 mt-1">Segera backup database (tombol di bawah), lalu hapus isi tabel yang tidak perlu. Kalau penuh, simpan baru akan gagal.</p>
+  </div>
+  <!-- Storage -->
+  <div class="bg-gray-950 border border-gray-800 rounded-xl p-3 mb-4">
+    <div class="flex items-center justify-between mb-1">
+      <h3 class="text-xs font-bold text-gray-200">💾 Storage D1</h3>
+      <button onclick="loadD1Storage()" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-200 text-[11px] font-bold rounded">🔄 Refresh</button>
+    </div>
+    <div class="w-full bg-gray-800 rounded-full h-2.5 mb-1"><div id="d1Bar" class="bg-emerald-500 h-2.5 rounded-full" style="width:0%"></div></div>
+    <p id="d1Summary" class="text-xs text-gray-300 mb-2">Menghitung...</p>
+    <div id="d1Tables" class="overflow-x-auto mb-2"></div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div>
+        <h4 class="text-[11px] font-bold text-amber-300 mb-1">📦 File Terbesar (5 nota)</h4>
+        <div id="d1Biggest" class="text-[11px] text-gray-400 space-y-1">-</div>
+      </div>
+      <div>
+        <h4 class="text-[11px] font-bold text-emerald-300 mb-1">📄 File Terkecil (5 nota)</h4>
+        <div id="d1Smallest" class="text-[11px] text-gray-400 space-y-1">-</div>
+      </div>
+    </div>
+  </div>
+  <!-- Backup & Restore -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+    <div class="bg-gray-950 border border-gray-800 rounded-xl p-3">
+      <h3 class="text-xs font-bold text-gray-200 mb-1">⬇️ Backup Semua Tabel D1</h3>
+      <p class="text-[11px] text-gray-500 mb-2">Download SEMUA tabel D1 (Arsip Nota, Data Gabungan, User, Pengaturan) + isinya jadi 1 file JSON. Simpan sebagai cadangan.</p>
       <p id="backupInfo" class="text-[11px] text-gray-400 mb-2">-</p>
-      <button onclick="backupDatabase()" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-gray-950 text-xs font-bold rounded-lg">⬇️ Download Backup (.json)</button>
+      <button onclick="backupDatabase()" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-gray-950 text-xs font-bold rounded-lg">⬇️ Download Backup D1 (.json)</button>
     </div>
     <div class="bg-gray-950 border border-gray-800 rounded-xl p-3">
-      <h3 class="text-xs font-bold text-gray-200 mb-1">⬆️ Restore Database</h3>
-      <p class="text-[11px] text-gray-500 mb-2">Pilih file backup (.json) untuk kembalikan semua data. <b class="text-red-400">Data yang ada sekarang akan ditimpa!</b></p>
+      <h3 class="text-xs font-bold text-gray-200 mb-1">⬆️ Restore Database D1</h3>
+      <p class="text-[11px] text-gray-500 mb-2">Pilih file backup D1 (.json) untuk kembalikan semua data. <b class="text-red-400">Data yang ada sekarang akan ditimpa!</b> Setelah restore, semua user harus login ulang.</p>
       <input id="restoreFile" type="file" accept=".json,application/json" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs mb-2 text-gray-300">
       <p id="restorePreview" class="text-[11px] text-gray-400 mb-2">Belum ada file dipilih.</p>
       <button onclick="restoreDatabase()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-gray-950 text-xs font-bold rounded-lg">⬆️ Restore Sekarang</button>
     </div>
   </div>
+  <!-- Hapus isi tabel -->
+  <div class="bg-gray-950 border border-red-500/30 rounded-xl p-3">
+    <h3 class="text-xs font-bold text-red-300 mb-1">🗑️ Hapus Isi Tabel D1</h3>
+    <p class="text-[11px] text-gray-500 mb-2">Hapus SEMUA isi dari 1 tabel. <b class="text-red-400">Tidak bisa dibatalkan!</b> Backup dulu sebelum hapus. Tabel User tidak bisa dihapus di sini (hapus satu per satu di Daftar User agar tidak kehilangan Admin).</p>
+    <div class="flex flex-wrap gap-2 items-center">
+      <select id="clearTableSelect" class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200">
+        <option value="nota">Arsip Nota (nota)</option>
+        <option value="gabungan">Data Gabungan (gabungan)</option>
+        <option value="sessions">Sesi Login (sessions) — logout semua user</option>
+        <option value="settings">Pengaturan (settings)</option>
+      </select>
+      <button onclick="hapusIsiTabelD1()" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg">🗑️ Hapus Isi Tabel</button>
+      <span id="clearTableInfo" class="text-[11px] text-gray-400"></span>
+    </div>
+  </div>
 </div>
+
 <!-- Form Tambah / Edit -->
   <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 mb-5">
     <h2 id="formTitle" class="text-sm font-bold text-amber-300 mb-3">➕ Tambah User Baru</h2>
@@ -457,108 +501,188 @@ function keArsip(){ const s=getSession(); window.location.href='arsip.html'+(s?s
 window.addEventListener('DOMContentLoaded', ()=>{ const s=getSession(); if(!s){ showLoginOverlay(); } else { hideLoginOverlay(); cekAkses(s); } if(window.lucide) lucide.createIcons(); });
 </script>
 <script>
-// [LOCK] USER CRUD -> D1 /api/users (override LocalStorage). Cache in-memory, backend D1.
-window._usersCache = [];
-window.loadUsers = async function(){
+// [LOCK] D1 - Backup semua tabel, Restore, Storage, Hapus isi tabel. Override versi lama LocalStorage.
+window.d1StatsCache = null;
+window.fmtBytesD1 = function(b){ if(!b && b!==0) return '-'; if(b<1024) return b+' B'; if(b<1024*1024) return (b/1024).toFixed(1)+' KB'; if(b<1024*1024*1024) return (b/1024/1024).toFixed(2)+' MB'; return (b/1024/1024/1024).toFixed(2)+' GB'; };
+window.loadD1Storage = async function(){
+  const sum=document.getElementById('d1Summary');
+  const bar=document.getElementById('d1Bar');
+  const tbl=document.getElementById('d1Tables');
+  const big=document.getElementById('d1Biggest');
+  const small=document.getElementById('d1Smallest');
+  const warn=document.getElementById('d1WarnBox');
+  const warnPct=document.getElementById('d1WarnPct');
+  if(sum) sum.textContent='Menghubungi D1...';
   try{
     const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
     const headers = {};
     if(token) headers['Authorization'] = 'Bearer ' + token;
-    const res = await fetch('/api/users', { headers });
-    if(res.ok){
-      const j = await res.json();
-      const arr = Array.isArray(j.data) ? j.data : [];
-      window._usersCache = arr.map(u=>({ username:u.username, nama:u.nama||u.username, role:u.role, createdAt:u.created_at||Date.now() }));
-    } else if(res.status===401){
-      if(typeof tampilkanToast==='function') tampilkanToast('Sesi habis (401). Logout lalu login lagi untuk lihat daftar user.','error');
-    } else if(res.status===403){
-      if(typeof tampilkanToast==='function') tampilkanToast('Hanya Admin bisa lihat daftar user (403).','error');
+    const res = await fetch('/api/storage?action=stats', { headers });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const j = await res.json();
+    if(!j.ok) throw new Error(j.error||'Gagal load stats');
+    const d = j.d1;
+    window.d1StatsCache = d;
+    if(bar){
+      bar.style.width = Math.max(d.pctUsed, 0.1)+'%';
+      bar.className = 'h-2.5 rounded-full ' + (d.pctUsed>=95 ? 'bg-red-500' : d.pctUsed>=80 ? 'bg-amber-500' : 'bg-emerald-500');
     }
-  }catch(e){ console.warn('Gagal load users dari D1:', e); }
-  try{ if(typeof renderUserTable==='function') renderUserTable(); }catch{}
-};
-window.getUsers = function(){ return window._usersCache || []; };
-window.saveUsers = function(u){ window._usersCache = u || []; };
-window.simpanUser = async function(){
-  const username=(document.getElementById('fUsername')?.value||'').trim();
-  const nama=(document.getElementById('fNama')?.value||'').trim();
-  const pass=(document.getElementById('fPassword')?.value||'');
-  const role=document.getElementById('fRole')?.value||'user';
-  if(!username){ alert('Username wajib diisi'); return; }
-  if(!/^[a-zA-Z0-9_.-]+$/.test(username)){ alert('Username hanya boleh huruf, angka, _ . -'); return; }
-  try{
-    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
-    const headers = { 'Content-Type':'application/json' };
-    if(token) headers['Authorization'] = 'Bearer ' + token;
-    if(window.editUsername){
-      // Edit -> PUT
-      const body = { username: window.editUsername, nama: nama||username, role };
-      if(pass) body.password = pass;
-      const res = await fetch('/api/users', { method:'PUT', headers, body: JSON.stringify(body) });
-      const text = await res.text();
-      let j = {};
-      try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
-      if(!res.ok || j.ok === false){
-        alert('Gagal update user: ' + (j.error || j.message || ('HTTP ' + res.status)));
-        return;
+    if(sum) sum.innerHTML = '<b>'+window.fmtBytesD1(d.totalUsed)+'</b> terpakai dari <b>5 GB</b> • Sisa: <b class="text-emerald-300">'+window.fmtBytesD1(d.remainingBytes)+'</b> • Terpakai: <b>'+d.pctUsed+'%</b>';
+    if(warn){
+      if(d.hampirPenuh){
+        warn.classList.remove('hidden');
+        if(warnPct) warnPct.textContent = d.pctUsed+'%';
+        if(typeof tampilkanToast==='function') tampilkanToast('⚠️ Database hampir penuh ('+d.pctUsed+'% terpakai). Segera backup database!','error');
+      } else {
+        warn.classList.add('hidden');
       }
-      alert('User "'+username+'" berhasil diupdate'+(pass?' (password diganti)':'')+'.');
-    } else {
-      // Tambah baru -> POST
-      if(!pass){ alert('Password wajib diisi untuk user baru'); return; }
-      const res = await fetch('/api/users', { method:'POST', headers, body: JSON.stringify({ username, password:pass, role, nama: nama||username }) });
-      const text = await res.text();
-      let j = {};
-      try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
-      if(!res.ok || j.ok === false){
-        alert('Gagal tambah user: ' + (j.error || j.message || ('HTTP ' + res.status)));
-        return;
-      }
-      alert('User "'+username+'" berhasil ditambah (role: '+role+').');
     }
-    if(typeof resetForm==='function') resetForm();
-    await loadUsers();
+    if(tbl){
+      let h = '<table class="w-full text-[11px]"><thead><tr class="bg-gray-900 text-gray-400"><th class="p-1.5 text-left">Tabel</th><th class="p-1.5 text-center">Jumlah</th><th class="p-1.5 text-right">Ukuran</th></tr></thead><tbody>';
+      (d.tables||[]).forEach(t=>{
+        h += '<tr class="border-t border-gray-800"><td class="p-1.5 font-bold text-gray-200">'+(t.label||t.name)+' <span class="text-gray-500 font-normal">('+t.name+')</span></td><td class="p-1.5 text-center">'+t.count+'</td><td class="p-1.5 text-right">'+window.fmtBytesD1(t.bytes)+'</td></tr>';
+      });
+      h += '</tbody></table>';
+      tbl.innerHTML = h;
+    }
+    const escD1 = (v)=>String(v??'-').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    if(big){
+      if(!d.biggest || !d.biggest.length) big.innerHTML = '<p>Belum ada nota.</p>';
+      else big.innerHTML = d.biggest.map((r,i)=>'<p><b class="text-amber-300">'+(i+1)+'.</b> '+escD1(r.no_nota||'-')+' • '+escD1(r.nama_kapal||'-')+' • '+escD1(r.tanggal||'-')+' • <b>'+window.fmtBytesD1(r.bytes)+'</b></p>').join('');
+    }
+    if(small){
+      if(!d.smallest || !d.smallest.length) small.innerHTML = '<p>Belum ada nota.</p>';
+      else small.innerHTML = d.smallest.map((r,i)=>'<p><b class="text-emerald-300">'+(i+1)+'.</b> '+escD1(r.no_nota||'-')+' • '+escD1(r.nama_kapal||'-')+' • '+escD1(r.tanggal||'-')+' • <b>'+window.fmtBytesD1(r.bytes)+'</b></p>').join('');
+    }
   }catch(e){
-    alert('Gagal simpan user: ' + String(e.message||e));
+    if(sum) sum.textContent = 'Gagal load storage D1: ' + String(e.message||e) + ' — Cek login / Functions.';
+    if(tbl) tbl.innerHTML = '';
+    if(big) big.innerHTML = '-';
+    if(small) small.innerHTML = '-';
   }
 };
-window.hapusUser = async function(username){
-  const users = window._usersCache || [];
-  const s = (typeof getSession==='function') ? getSession() : null;
-  if(s && s.username===username){ alert('Tidak bisa hapus akun sendiri (yang sedang login).'); return; }
-  const admins = users.filter(x=>x.role==='admin');
-  const target = users.find(x=>x.username===username);
-  if(target && target.role==='admin' && admins.length<=1){ alert('Tidak bisa hapus admin terakhir. Tambah admin lain dulu.'); return; }
-  if(!confirm('Hapus user "'+username+'"?')) return;
+window.backupDatabase = async function(){
   try{
     const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
     const headers = {};
     if(token) headers['Authorization'] = 'Bearer ' + token;
-    const res = await fetch('/api/users?username='+encodeURIComponent(username), { method:'DELETE', headers });
+    const info = document.getElementById('backupInfo');
+    if(info) info.textContent = 'Menghubungi D1...';
+    const res = await fetch('/api/storage?action=backup', { headers });
     const text = await res.text();
     let j = {};
     try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
     if(!res.ok || j.ok === false){
-      alert('Gagal hapus user: ' + (j.error || j.message || ('HTTP ' + res.status)));
+      alert('Gagal backup D1: ' + (j.error || j.message || ('HTTP ' + res.status)));
+      if(info) info.textContent = 'Gagal backup.';
       return;
     }
-  }catch(e){ alert('Gagal hapus user: ' + String(e.message||e)); return; }
-  if(window.editUsername===username && typeof resetForm==='function') resetForm();
-  await loadUsers();
-  alert('User "'+username+'" dihapus.');
+    const blob = new Blob([JSON.stringify(j, null, 2)], { type:'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date();
+    const pad = n=>String(n).padStart(2,'0');
+    a.href = url;
+    a.download = 'PANDAWA_D1_BACKUP_'+ts.getFullYear()+'-'+pad(ts.getMonth()+1)+'-'+pad(ts.getDate())+'_'+pad(ts.getHours())+pad(ts.getMinutes())+pad(ts.getSeconds())+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    if(info) info.textContent = 'Backup: '+j.counts.nota+' nota, '+j.counts.gabungan+' gabungan, '+j.counts.users+' user, '+j.counts.settings+' pengaturan.';
+    alert('Backup D1 didownload: '+j.counts.nota+' nota, '+j.counts.gabungan+' gabungan, '+j.counts.users+' user, '+j.counts.settings+' pengaturan.');
+  }catch(e){
+    alert('Gagal backup D1: ' + String(e.message||e));
+  }
 };
-// Load users dari D1 saat halaman siap
+let restorePayloadD1 = null;
+try{
+  document.getElementById('restoreFile')?.addEventListener('change', function(){
+    const f = this.files && this.files[0];
+    const prev = document.getElementById('restorePreview');
+    restorePayloadD1 = null;
+    if(!f){ if(prev) prev.textContent='Belum ada file dipilih.'; return; }
+    const rd = new FileReader();
+    rd.onload = ()=>{
+      try{
+        const j = JSON.parse(rd.result||'');
+        if(!j || j.type!=='PANDAWA_D1_BACKUP' || !j.tables || typeof j.tables!=='object'){
+          if(prev) prev.innerHTML = '<span class="text-red-400">❌ File bukan backup PANDAWA D1 (type tidak cocok). Pakai file backup D1 yang baru.</span>';
+          return;
+        }
+        restorePayloadD1 = j;
+        const c = j.counts || {};
+        if(prev) prev.innerHTML = '✅ Backup D1 valid — '+ (c.nota||0) +' nota, '+ (c.gabungan||0) +' gabungan, '+ (c.users||0) +' user, '+ (c.settings||0) +' pengaturan. Backup: '+(j.backupAt||'-');
+      }catch(e){
+        if(prev) prev.innerHTML = '<span class="text-red-400">❌ File tidak bisa dibaca: '+String(e.message||e)+'</span>';
+      }
+    };
+    rd.readAsText(f);
+  });
+}catch{}
+window.restoreDatabase = async function(){
+  if(!restorePayloadD1){ alert('Pilih file backup D1 (.json) dulu.'); return; }
+  const c = restorePayloadD1.counts || {};
+  if(!confirm('RESTORE DATABASE D1?\n\nIni akan MENIMPA semua data yang ada sekarang ('+(c.nota||0)+' nota, '+(c.gabungan||0)+' gabungan, '+(c.users||0)+' user, '+(c.settings||0)+' pengaturan).\n\nSetelah restore, semua user harus login ulang.\n\nLanjutkan?')) return;
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = { 'Content-Type':'application/json' };
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch('/api/storage?action=restore', { method:'POST', headers, body: JSON.stringify(restorePayloadD1) });
+    const text = await res.text();
+    let j = {};
+    try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+    if(!res.ok || j.ok === false){
+      alert('Restore gagal: ' + (j.error || j.message || ('HTTP ' + res.status)));
+      return;
+    }
+    alert('Restore D1 selesai: '+(j.restored.nota||0)+' nota, '+(j.restored.gabungan||0)+' gabungan, '+(j.restored.users||0)+' user, '+(j.restored.settings||0)+' pengaturan. Semua user harus login ulang. Halaman akan dimuat ulang.');
+    location.reload();
+  }catch(e){
+    alert('Restore gagal: ' + String(e.message||e));
+  }
+};
+window.hapusIsiTabelD1 = async function(){
+  const sel = document.getElementById('clearTableSelect');
+  const table = sel ? sel.value : '';
+  const info = document.getElementById('clearTableInfo');
+  if(!table){ alert('Pilih tabel dulu.'); return; }
+  const label = sel.options[sel.selectedIndex]?.text || table;
+  if(!confirm('HAPUS ISI TABEL "'+label+'"?\n\nSEMUA isi tabel ini akan dihapus dan TIDAK BISA dikembalikan!\n\nBackup dulu kalau belum backup.\n\nLanjutkan?')) return;
+  if(!confirm('YAKIN? Ketik OK di kepala — ini terakhir. Hapus SEMUA isi tabel "'+label+'"?')) return;
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = {};
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch('/api/storage?action=clear&table='+encodeURIComponent(table), { method:'DELETE', headers });
+    const text = await res.text();
+    let j = {};
+    try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+    if(!res.ok || j.ok === false){
+      alert('Gagal hapus isi tabel: ' + (j.error || j.message || ('HTTP ' + res.status)));
+      return;
+    }
+    if(info) info.textContent = 'Terhapus: '+(j.deleted||0)+' baris dari tabel '+table+'.';
+    alert('Isi tabel "'+label+'" dihapus: '+(j.deleted||0)+' baris.');
+    if(typeof loadD1Storage==='function') loadD1Storage();
+    if(typeof loadUsers==='function') loadUsers();
+  }catch(e){
+    alert('Gagal hapus isi tabel: ' + String(e.message||e));
+  }
+};
+// Load storage D1 saat halaman siap
 try{
   if(document.readyState==='loading'){
-    document.addEventListener('DOMContentLoaded', ()=>{ if(typeof loadUsers==='function') loadUsers(); });
+    document.addEventListener('DOMContentLoaded', ()=>{ if(typeof loadD1Storage==='function') loadD1Storage(); });
   } else {
-    if(typeof loadUsers==='function') loadUsers();
+    if(typeof loadD1Storage==='function') loadD1Storage();
   }
 }catch{}
-</script>
 
+// [LOCK] refreshD1Storage lama (panel D1 lama sudah dihapus) -> no-op, pakai loadD1Storage.
+window.refreshD1Storage = function(){};
+</script>
 <!-- [LOCK] OVERRIDE FINAL - definisi di akhir menang atas definisi lama/proxy. Jangan dihapus. -->
 <script>
+
+// [LOCK] getSession/setSession -> sessionStorage
 window.getSession = function(){
   try{
     const h=window.location.hash||'';
@@ -611,6 +735,86 @@ window.doLogin = async function(){
     if(errEl){ errEl.textContent = 'Gagal login: ' + String(e.message||e) + ' — Cek koneksi / Functions.'; errEl.classList.remove('hidden'); }
   }
 };
+
+</script>
+
+
+<script>
+// [LOCK] USER CRUD -> D1 /api/users (override LocalStorage). Cache in-memory, backend D1.
+window._usersCache = [];
+window.loadUsers = async function(){
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = {};
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch('/api/users', { headers });
+    if(res.ok){ const j = await res.json(); const arr = Array.isArray(j.data) ? j.data : []; window._usersCache = arr.map(u=>({ username:u.username, nama:u.nama||u.username, role:u.role, createdAt:u.created_at||Date.now() })); }
+    else if(res.status===401){ if(typeof tampilkanToast==='function') tampilkanToast('Sesi habis (401). Logout lalu login lagi untuk lihat daftar user.','error'); }
+    else if(res.status===403){ if(typeof tampilkanToast==='function') tampilkanToast('Hanya Admin bisa lihat daftar user (403).','error'); }
+  }catch(e){ console.warn('Gagal load users dari D1:', e); }
+  try{ if(typeof renderUserTable==='function') renderUserTable(); }catch{}
+};
+window.getUsers = function(){ return window._usersCache || []; };
+window.saveUsers = function(u){ window._usersCache = u || []; };
+window.simpanUser = async function(){
+  const username=(document.getElementById('fUsername')?.value||'').trim();
+  const nama=(document.getElementById('fNama')?.value||'').trim();
+  const pass=(document.getElementById('fPassword')?.value||'');
+  const role=document.getElementById('fRole')?.value||'user';
+  if(!username){ alert('Username wajib diisi'); return; }
+  if(!/^[a-zA-Z0-9_.-]+$/.test(username)){ alert('Username hanya boleh huruf, angka, _ . -'); return; }
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = { 'Content-Type':'application/json' };
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    if(window.editUsername){
+      const body = { username: window.editUsername, nama: nama||username, role };
+      if(pass) body.password = pass;
+      const res = await fetch('/api/users', { method:'PUT', headers, body: JSON.stringify(body) });
+      const text = await res.text();
+      let j = {};
+      try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+      if(!res.ok || j.ok === false){ alert('Gagal update user: ' + (j.error || j.message || ('HTTP ' + res.status))); return; }
+      alert('User "'+username+'" berhasil diupdate'+(pass?' (password diganti)':'')+'.');
+    } else {
+      if(!pass){ alert('Password wajib diisi untuk user baru'); return; }
+      const res = await fetch('/api/users', { method:'POST', headers, body: JSON.stringify({ username, password:pass, role, nama: nama||username }) });
+      const text = await res.text();
+      let j = {};
+      try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+      if(!res.ok || j.ok === false){ alert('Gagal tambah user: ' + (j.error || j.message || ('HTTP ' + res.status))); return; }
+      alert('User "'+username+'" berhasil ditambah (role: '+role+').');
+    }
+    if(typeof resetForm==='function') resetForm();
+    await loadUsers();
+  }catch(e){ alert('Gagal simpan user: ' + String(e.message||e)); }
+};
+window.hapusUser = async function(username){
+  const users = window._usersCache || [];
+  const s = (typeof getSession==='function') ? getSession() : null;
+  if(s && s.username===username){ alert('Tidak bisa hapus akun sendiri (yang sedang login).'); return; }
+  const admins = users.filter(x=>x.role==='admin');
+  const target = users.find(x=>x.username===username);
+  if(target && target.role==='admin' && admins.length<=1){ alert('Tidak bisa hapus admin terakhir. Tambah admin lain dulu.'); return; }
+  if(!confirm('Hapus user "'+username+'"?')) return;
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = {};
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch('/api/users?username='+encodeURIComponent(username), { method:'DELETE', headers });
+    const text = await res.text();
+    let j = {};
+    try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+    if(!res.ok || j.ok === false){ alert('Gagal hapus user: ' + (j.error || j.message || ('HTTP ' + res.status))); return; }
+  }catch(e){ alert('Gagal hapus user: ' + String(e.message||e)); return; }
+  if(window.editUsername===username && typeof resetForm==='function') resetForm();
+  await loadUsers();
+  alert('User "'+username+'" dihapus.');
+};
+try{
+  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', ()=>{ if(typeof loadUsers==='function') loadUsers(); }); }
+  else { if(typeof loadUsers==='function') loadUsers(); }
+}catch{}
 </script>
 
 </body>
