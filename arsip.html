@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
 <script>
-// [LOCK] WAJIB D1: LocalStorage HANYA untuk Gemini API Key (biar tanpa proxy). Selebihnya WAJIB D1.
+// [LOCK] WAJIB D1: LocalStorage HANYA untuk Gemini API Key. Selebihnya WAJIB D1.
 (function(){
   var ALLOWED = ['PANDAWA_API_KEYS_V14','PANDAWA_API_KEY_1','PANDAWA_API_KEY_2','PANDAWA_API_KEY_3','PANDAWA_KEYS_STD_V14','PANDAWA_API_KEYS_COUNT','pandawa_gemini_key'];
   try{
@@ -45,7 +45,113 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#0b0f17;color:#f3f4f6
 </head>
 <body class="min-h-screen pb-12">
 <!-- PANDAWA SECURITY + D1 BRIDGE (Deploy) - BUKAN worker.js, ini script di HTML -->
-
+<script>
+// ===== 1. KEAMANAN: Matikan klik kanan + copas (copy/cut) =====
+// Paste di input TETAP diizinkan agar API Key bisa ditempel. Copy/cut dimatikan di semua tempat.
+(function(){
+  document.addEventListener('contextmenu', function(e){ e.preventDefault(); return false; });
+  document.addEventListener('copy', function(e){ e.preventDefault(); return false; });
+  document.addEventListener('cut', function(e){ e.preventDefault(); return false; });
+  document.addEventListener('dragstart', function(e){ e.preventDefault(); return false; });
+  document.addEventListener('keydown', function(e){
+    // Ctrl+C / Ctrl+X / Ctrl+U (view source) / F12 / Ctrl+Shift+I/J (devtools)
+    const k = (e.key || '').toLowerCase();
+    if((e.ctrlKey || e.metaKey) && (k === 'c' || k === 'x' || k === 'u')){ e.preventDefault(); return false; }
+    if(e.key === 'F12'){ e.preventDefault(); return false; }
+    if((e.ctrlKey || e.metaKey) && e.shiftKey && (k === 'i' || k === 'j' || k === 'c')){ e.preventDefault(); return false; }
+  });
+})();
+// ===== 2. GEMINI PROXY: Semua panggilan Gemini langsung dialihkan ke /api/gemini =====
+// Key TIDAK PERNAH keluar dari server. Browser hanya kirim gambar + prompt, server yang panggil Gemini pakai key dari D1.
+// Format response dikembalikan persis seperti Gemini asli, jadi kode lama tidak perlu diubah.
+(function(){
+  const _origFetch = window.fetch;
+  window.fetch = async function(url, opts){
+    const urlStr = String(url || '');
+    if(urlStr.includes('generativelanguage.googleapis.com')){
+      try{
+        const m = urlStr.match(/models\/([^:]+):generateContent/);
+        const model = m ? decodeURIComponent(m[1]) : 'gemini-2.0-flash';
+        let body = {};
+        try{ body = JSON.parse((opts && opts.body) || '{}'); }catch{}
+        const parts = (body && body.contents && body.contents[0] && body.contents[0].parts) || [];
+        let prompt = '', image = '';
+        for(const p of parts){
+          if(p && p.text) prompt += p.text;
+          if(p && p.inlineData && p.inlineData.data) image = p.inlineData.data;
+          if(p && p.inline_data && p.inline_data.data) image = p.inline_data.data;
+        }
+        const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+        const res = await _origFetch('/api/gemini', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({ image_base64: image, prompt: prompt, model: model })
+        });
+        const j = await res.json().catch(()=>({}));
+        if(!j.ok){
+          return new Response(JSON.stringify({ error: { message: j.error || 'Gemini proxy error' } }), { status: res.status || 502, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: j.text || '' }] } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }catch(e){
+        return new Response(JSON.stringify({ error: { message: String(e) } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+    return _origFetch(url, opts);
+  };
+})();
+// ===== 3. D1 BRIDGE: Login via D1 (dapat token), D1 jadi sumber utama, LocalStorage jadi cache cepat =====
+// Alur: Login -> D1 API (dapat token) -> token di sessionStorage -> API call pakai token.
+// Data: Tampil dari LocalStorage dulu (cepat), lalu sync dari D1 (fresh). Simpan: ke D1 dulu, lalu cache LocalStorage.
+window.PANDAWA_D1 = {
+  getToken: function(){ return sessionStorage.getItem('PANDAWA_TOKEN') || ''; },
+  setToken: function(t){ try{ if(t) sessionStorage.setItem('PANDAWA_TOKEN', t); else sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} },
+  api: async function(path, method, body){
+    const headers = { 'Content-Type': 'application/json' };
+    const tok = this.getToken();
+    if(tok) headers['Authorization'] = 'Bearer ' + tok;
+    const res = await fetch(path, { method: method || 'GET', headers, body: body ? JSON.stringify(body) : undefined });
+    const j = await res.json().catch(()=>({ ok:false, error:'Response bukan JSON' }));
+    if(!res.ok) throw new Error(j.error || ('HTTP ' + res.status));
+    return j;
+  },
+  // Sync D1 -> LocalStorage (D1 sumber utama). Dipanggil saat halaman load (setelah login).
+  syncFromD1: async function(){
+    try{
+      const tok = this.getToken();
+      if(!tok) return; // belum login, skip
+      // Arsip dari D1
+      const r = await this.api('/api/nota', 'GET');
+      if(r && r.ok && Array.isArray(r.data)){
+        try{ localStorage.setItem('PANDAWA_ARCHIVE_V14', JSON.stringify(r.data)); }catch{}
+      }
+    }catch(e){ console.warn('Sync D1 gagal (pakai cache LocalStorage):', e.message); }
+  }
+};
+// Bungkus doLogin lama: setelah login LocalStorage sukses, coba login D1 untuk dapat token.
+window.addEventListener('DOMContentLoaded', function(){
+  try{
+    const _origDoLogin = window.doLogin;
+    if(typeof _origDoLogin === 'function' && !window.__d1LoginWrapped){
+      window.__d1LoginWrapped = true;
+      window.doLogin = async function(){
+        const result = await _origDoLogin.apply(this, arguments);
+        try{
+          const u = (document.getElementById('loginUser')?.value || '').trim();
+          const p = (document.getElementById('loginPass')?.value || '');
+          if(u && p){
+            const res = await fetch('/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username:u, password:p }) });
+            const j = await res.json().catch(()=>({}));
+            if(j.ok && j.token){ window.PANDAWA_D1.setToken(j.token); window.PANDAWA_D1.syncFromD1(); }
+          }
+        }catch(e){ console.warn('D1 login gagal (pakai LocalStorage):', e.message); }
+        return result;
+      };
+    }
+  }catch(e){ console.warn('D1 bridge login wrap gagal:', e); }
+  // Saat halaman load & sudah ada token, sync D1
+  try{ if(window.PANDAWA_D1.getToken()) window.PANDAWA_D1.syncFromD1(); }catch{}
+});
+</script>
 
 <!-- PANDAWA PRELOAD AWAL - tampil diawal agar keliatan keren, hilang otomatis. Tidak ganggu logika kunci. -->
 <style>
@@ -139,7 +245,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#0b0f17;color:#f3f4f6
 <div class="md:col-span-2">
 <label class="text-[10px] font-bold text-amber-400 uppercase tracking-wider">Sumber Data</label>
 <select id="filterSumber" onchange="applyFilter()" class="w-full mt-1 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm input-gold">
-<option value="SEMUA" selected>D1 (Wajib)</option>
+<option value="SEMUA" selected>Semua (Local + D1)</option>
 <option value="LOCAL">LocalStorage Saja</option>
 <option value="D1">D1 Saja</option>
 </select>
@@ -176,7 +282,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#0b0f17;color:#f3f4f6
 <tbody id="tbodyArsip" class="divide-y divide-gray-800/60 text-sm"></tbody>
 </table>
 </div>
-<div id="emptyArsip" class="hidden py-16 text-center"><i data-lucide="archive" class="w-10 h-10 mx-auto text-gray-700 mb-3"></i><p class="text-sm text-gray-500">Belum ada arsip. Simpan dari halaman OCR dulu.</p><p class="text-[11px] text-gray-600 mt-1">Data tersimpan di D1 (Wajib)</p></div>
+<div id="emptyArsip" class="hidden py-16 text-center"><i data-lucide="archive" class="w-10 h-10 mx-auto text-gray-700 mb-3"></i><p class="text-sm text-gray-500">Belum ada arsip. Simpan dari halaman OCR dulu.</p><p class="text-[11px] text-gray-600 mt-1">Data tersimpan di LocalStorage key: PANDAWA_ARCHIVE_V14</p></div>
 <!-- PAGINATION 20 DATA -->
 <div class="flex items-center justify-between px-4 py-3 border-t border-gray-800 text-xs text-gray-400">
 <span id="infoPagination">Menampilkan 0 dari 0 data</span>
@@ -270,35 +376,37 @@ function formatFitur(f){
   return '<span class="badge bg-gray-800 text-gray-300">'+f+'</span>';
 }
 async function loadArsip(){
-  // [LOCK] WAJIB D1. LocalStorage HANYA untuk Gemini Key. Arsip baca dari D1 (dengan token).
-  allData=[];
+  const local=getLocalArchive().map(x=>({...x, _sumber:'LOCAL'}));
+  allData=[...local];
+  // PENGEMBANGAN: LocalStorage adalah sumber utama. D1 hanya pelengkap kalau online, gagal D1 tidak boleh bikin Arsip kosong.
+  // Sebelumnya fetch /api/list + cek j.success -> D1 tidak pernah kebaca, jadi data baru tidak muncul.
   try{
-    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
-    const headers = {};
-    if(token) headers['Authorization'] = 'Bearer ' + token;
-    const res=await fetch('/api/nota', { headers });
-    if(res.ok){
-      const j=await res.json();
-      const arr=Array.isArray(j.data)?j.data:(Array.isArray(j)?j:[]);
+    const res=await fetch('/api/nota');
+    if(res.ok){ const j=await res.json(); const arr=Array.isArray(j.data)?j.data:(Array.isArray(j)?j:[]);
       if(j.ok!==false && arr.length>=0){
         const d1=arr.map(x=>{
           let o={...x, _sumber:'D1'};
+          // Backend D1 kadang kirim data sebagai string JSON {items, headers} -> parse dulu
           if(typeof x.data==='string'){ try{ const dd=JSON.parse(x.data); o={...o, ...dd}; }catch{} }
           if(!o.items && Array.isArray(x.items)) o.items=x.items;
+          // OTOMATIS: headers harus ikut, kalau tidak ada buat dari baris pertama
           if(o.feature_type==='OTOMATIS' && (!o.headers || !o.headers.length)){
             const first=(o.items||[])[0]; const n=first && first.rowVals ? first.rowVals.length : (Array.isArray(first)?first.length:0);
             o.headers=Array.from({length:n},(_,i)=>'Kolom '+(i+1));
           }
+          // Normalisasi id ke string agar hapus bisa cocok (D1 id string, Local id number)
           o.id=String(o.id??'');
           return o;
         });
-        allData=[...d1];
+        // Gabung: D1 menang jika id sama (data terbaru), Local yang belum di D1 tetap tampil
+        d1.forEach(d=>{
+          const idx=allData.findIndex(a=> String(a.id)===String(d.id) && a.no_nota===d.no_nota);
+          if(idx>-1) allData[idx]=d; else if(!allData.some(a=>a.no_nota===d.no_nota && a.feature_type===d.feature_type && a.tanggal===d.tanggal)) allData.push(d);
+        });
       }
-    } else if(res.status===401){
-      console.warn('Arsip: Sesi habis (401). Logout lalu login lagi untuk lihat arsip D1.');
-      if(typeof tampilkanToast==='function') tampilkanToast('Sesi habis (401). Logout lalu login lagi untuk lihat arsip D1.','error');
     }
-  }catch(e){ console.warn('Gagal load arsip dari D1:', e); }
+  }catch(e){ console.warn('D1 offline / file://, pakai LocalStorage saja', e); }
+  // V12: Sort BERDASARKAN TANGGAL NOTA (terbaru dulu), bukan tanggal simpan
   allData=sortArsipByTanggal(allData, document.getElementById('sortBy')?.value||'TANGGAL_NOTA_DESC');
   applyFilter();
 }
@@ -726,8 +834,8 @@ function simpanGabungan(){
   tampilkanToast('✅ Gabungan disimpan ('+entry.jumlahNota+' nota • '+entry.jumlahBaris+' baris)','success');
   renderDetailNota();
 }
-async function hapusGabunganTersimpan(id){
-  const _ok = await showMsgbox('Hapus Gabungan?', 'Hapus data gabungan tersimpan ini?', 'Ya, Hapus'); if(!_ok) return;
+function hapusGabunganTersimpan(id){
+  if(!confirm('Hapus data gabungan tersimpan ini?')) return;
   const list=getGabunganTersimpan().filter(x=>String(x.id)!==String(id));
   localStorage.setItem(GABUNG_TERSIMPAN_KEY, JSON.stringify(list));
   if(gabungTersimpanPage>Math.max(1,Math.ceil(list.length/20))) gabungTersimpanPage=Math.max(1,Math.ceil(list.length/20));
@@ -1050,45 +1158,33 @@ function printDetailNota(){
 function fileSaudara(target){ try{ if(target==='index') return 'index.html'; if(target==='arsip') return 'arsip.html'; return target+'.html'; }catch{ return target+'.html'; } } // DEPLOY - nama bersih (bukan REV) - FIX Muat ke OCR: kirim nota langsung (tanpa cari di filtered). muatDetailKeOCR lama gagal untuk gabungan tersimpan & gabungan baru (detailNota tidak ada di filtered).
 function kirimNotaKeOCR(n){ if(!n) return; let fullNota=null; try{ fullNota={ id:n.id, feature_type:n.feature_type, no_nota:n.no_nota, tanggal:n.tanggal, nama_kapal:n.nama_kapal, kapal:n.nama_kapal, image_base64:n.image_base64||n.image_url||'', image_url:n.image_base64||n.image_url||'', items:n.items||[], headers:n.headers||[], resiko1:n.resiko1||0, resiko2:n.resiko2||0, created_at:n.created_at||'', _fromArsip:true, _loadAt:Date.now() }; localStorage.setItem('PANDAWA_LOAD_NOTA_V14', JSON.stringify(fullNota)); localStorage.setItem('PANDAWA_LOAD_ID_V14', String(n.id||'')); localStorage.setItem('PANDAWA_META_V14', JSON.stringify({no_nota:n.no_nota, tanggal:n.tanggal, kapal:n.nama_kapal, format:n.feature_type, headers:n.headers||[]})); localStorage.setItem('PANDAWA_DATA_V14', JSON.stringify(n.items||[])); if(n.image_base64){ try{ localStorage.setItem('PANDAWA_IMG_V14', n.image_base64); }catch{} } }catch(e){ console.warn('Muat ke OCR simpan gagal', e); } let hash=''; try{ const compact={feature_type:fullNota.feature_type, no_nota:fullNota.no_nota, tanggal:fullNota.tanggal, nama_kapal:fullNota.nama_kapal, items:fullNota.items, headers:fullNota.headers, resiko1:fullNota.resiko1, resiko2:fullNota.resiko2}; const s=JSON.stringify(compact); hash='#load='+btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); if(hash.length>8000) hash=''; }catch(e){ hash=''; } window.location.href=fileSaudara('index')+'?load_id='+encodeURIComponent(n.id||'')+'&from_arsip=1'+hash; }
 function muatKeOCR(idx){ const n=filtered[idx]; if(!n) return; kirimNotaKeOCR(n); }
-function muatDetailKeOCR(){ if(!detailNota) return; kirimNotaKeOCR(detailNota); } async async function hapusSatu(idx){
-  const n=filtered[idx]; if(!n) return;
-  const ok = await showMsgbox('Hapus Nota?', 'Hapus nota '+(n.no_nota||'-')+'? Data yang terhapus tidak bisa dikembalikan.', 'Ya, Hapus');
-  if(!ok) return;
-  try{
-    if(n.id){
-      const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
-      const headers = {};
-      if(token) headers['Authorization'] = 'Bearer ' + token;
-      const res = await fetch('/api/nota?id='+encodeURIComponent(n.id), {method:'DELETE', headers});
-      if(!res.ok && res.status!==404){
-        tampilkanToast('Gagal hapus dari D1: HTTP '+res.status,'error');
-        return;
-      }
-    }
-  }catch(e){ tampilkanToast('Gagal hapus dari D1: '+String(e.message||e),'error'); return; }
-  tampilkanToast('Nota dihapus dari D1','success');
+function muatDetailKeOCR(){ if(!detailNota) return; kirimNotaKeOCR(detailNota); } async function hapusSatu(idx){
+  const n=filtered[idx]; if(!n) return; if(!confirm('Hapus nota '+n.no_nota+'?')) return;
+  // Hapus dari SEMUA versi LocalStorage (V5-V14), bukan hanya V14. Sebelumnya data balik lagi dari V5/V13.
+  const hapusDariSemuaVersi=(pred)=>{
+    ['PANDAWA_ARCHIVE_V14','PANDAWA_ARCHIVE_V13','PANDAWA_ARCHIVE_V12','PANDAWA_ARCHIVE_V11','PANDAWA_ARCHIVE_V10','PANDAWA_ARCHIVE_V9','PANDAWA_ARCHIVE_V8','PANDAWA_ARCHIVE_V7','PANDAWA_ARCHIVE_V6','PANDAWA_ARCHIVE_V5'].forEach(k=>{
+      try{ let arr=JSON.parse(localStorage.getItem(k)||'[]'); const before=arr.length; arr=arr.filter(a=>!pred(a)); if(arr.length!==before) localStorage.setItem(k, JSON.stringify(arr)); }catch{}
+    });
+  };
+  hapusDariSemuaVersi(a=> String(a.id)===String(n.id) || (a.no_nota===n.no_nota && a.feature_type===n.feature_type && a.tanggal===n.tanggal));
+  // Hapus juga dari D1 (kalau online). Sebelumnya hanya LocalStorage yang dihapus, jadi D1 muat ulang lagi.
+  try{ if(n.id) await fetch('/api/nota?id='+encodeURIComponent(n.id), {method:'DELETE'}); }catch{}
+  tampilkanToast('Nota dihapus (Local + D1)','success');
+  // Bersihkan pilihan gabung yang mengarah ke data yang sudah dihapus
   try{ if(typeof gabungDipilih!=='undefined') gabungDipilih=gabungDipilih.filter(x=> String(x)!==String(n.id)); }catch{}
   loadArsip();
 }
 async function hapusSemuaArsip(){
-  const ok = await showMsgbox('Hapus SEMUA Arsip?', 'Hapus SEMUA arsip di D1? Data yang terhapus tidak bisa dikembalikan.', 'Ya, Hapus Semua');
-  if(!ok) return;
+  if(!confirm('Hapus SEMUA arsip (Local + D1)? Data yang terhapus tidak bisa dikembalikan.')) return;
+  // Hapus SEMUA versi LocalStorage
+  ['PANDAWA_ARCHIVE_V14','PANDAWA_ARCHIVE_V13','PANDAWA_ARCHIVE_V12','PANDAWA_ARCHIVE_V11','PANDAWA_ARCHIVE_V10','PANDAWA_ARCHIVE_V9','PANDAWA_ARCHIVE_V8','PANDAWA_ARCHIVE_V7','PANDAWA_ARCHIVE_V6','PANDAWA_ARCHIVE_V5','PANDAWA_QUEUE_V5'].forEach(k=>{ try{ localStorage.removeItem(k); }catch{} });
+  // Hapus SEMUA di D1 (loop per id, agar backend tidak perlu endpoint khusus hapus massal)
   try{
-    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
-    const headers = {};
-    if(token) headers['Authorization'] = 'Bearer ' + token;
     const ids=[...new Set(allData.map(x=>x.id).filter(Boolean))];
-    let gagal=0;
-    for(const id of ids){
-      try{
-        const res = await fetch('/api/nota?id='+encodeURIComponent(id), {method:'DELETE', headers});
-        if(!res.ok && res.status!==404) gagal++;
-      }catch{ gagal++; }
-    }
-    if(gagal>0){ tampilkanToast(gagal+' nota gagal dihapus dari D1. Coba lagi.','error'); loadArsip(); return; }
-  }catch(e){ tampilkanToast('Gagal hapus semua: '+String(e.message||e),'error'); return; }
+    for(const id of ids){ try{ await fetch('/api/nota?id='+encodeURIComponent(id), {method:'DELETE'}); }catch{} }
+  }catch{}
   if(typeof gabungDipilih!=='undefined') gabungDipilih=[];
-  tampilkanToast('Semua arsip dihapus dari D1','success');
+  tampilkanToast('Semua arsip dihapus (Local + D1)','success');
   loadArsip();
 }
 async function syncDariD1(){
@@ -1120,36 +1216,11 @@ function tampilkanToast(pesan, tipe='success'){
   toast.classList.remove('translate-y-20','opacity-0');
   setTimeout(()=>{ toast.classList.add('translate-y-20','opacity-0'); },2500);
 }
-
-// [LOCK] MSGBOX konfirmasi hapus (ganti confirm() bawaan browser).
-function showMsgbox(title, message, confirmText){
-  return new Promise((resolve)=>{
-    const ov=document.getElementById('msgboxOverlay');
-    const t=document.getElementById('msgboxTitle');
-    const m=document.getElementById('msgboxMessage');
-    const btnOk=document.getElementById('msgboxConfirm');
-    const btnCancel=document.getElementById('msgboxCancel');
-    if(!ov || !t || !m || !btnOk || !btnCancel){ resolve(confirm(message)); return; }
-    t.textContent=title||'Hapus?';
-    m.textContent=message||'Yakin hapus?';
-    btnOk.textContent=confirmText||'Ya, Hapus';
-    ov.style.display='flex';
-    const cleanup=(val)=>{
-      ov.style.display='none';
-      btnOk.onclick=null; btnCancel.onclick=null; ov.onclick=null;
-      resolve(val);
-    };
-    btnOk.onclick=()=>cleanup(true);
-    btnCancel.onclick=()=>cleanup(false);
-    ov.onclick=(e)=>{ if(e.target===ov) cleanup(false); };
-  });
-}
-
 </script>
 
 <script>
 // FINAL LOCKED - Tombol Kembali ke OCR -> halaman utama aplikasi (index.html)
-
+function kembaliKeOCR(e){ window.location.href=fileSaudara('index'); if(e) e.preventDefault(); return false; }
 </script>
 
 <!-- REV29 - LOGIN + ROLE -->
@@ -1177,7 +1248,125 @@ const AUTH_USERS_KEY='PANDAWA_USERS_V14';
 const AUTH_SESSION_KEY='PANDAWA_SESSION_V14';
 function getUsers(){ try{ let u=JSON.parse(localStorage.getItem(AUTH_USERS_KEY)||'[]'); if(!u.length){ u=[{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} } return u; }catch{ return [{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; } }
 function saveUsers(u){ try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} }
-function getSession(){
+function getSession(){ try{ const h=window.location.hash||''; if(h.startsWith('#s=')){ let b=h.slice(3).replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4) b+='='; const s=JSON.parse(decodeURIComponent(escape(atob(b)))); if(s && s.username){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} try{ history.replaceState({},'',window.location.pathname+window.location.search); }catch{} return s; } } }catch{} try{ const s=JSON.parse(localStorage.getItem(AUTH_SESSION_KEY)||'null'); if(s && s.username) return s; }catch{} return null; }
+function setSession(s){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
+function clearSession(){ try{ localStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
+function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
+function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
+function showLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
+function hideLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='none'; }
+function showAksesDitolak(role){ const o=document.getElementById('aksesDitolakOverlay'); const t=document.getElementById('aksesRoleTxt'); if(t) t.textContent=role||'-'; if(o) o.style.display='flex'; }
+function doLogin(){ const u=(document.getElementById('loginUser')?.value||'').trim(); const p=(document.getElementById('loginPass')?.value||''); const s=loginUser(u,p); if(!s){ const e=document.getElementById('loginError'); if(e) e.classList.remove('hidden'); return; } const e=document.getElementById('loginError'); if(e) e.classList.add('hidden'); hideLoginOverlay(); cekAksesArsip(s); if(typeof tampilkanToast==='function') tampilkanToast('Selamat datang, '+(s.nama||s.username)+' ('+s.role+')','success'); }
+function doLogout(){ clearSession(); location.reload(); }
+function keHalamanUtama(){ const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); }
+function pergiKeKelolaUser(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href='kelola-user.html'+(s?sessionHash(s):''); return false; }
+function cekAksesArsip(s){ if(!s) return; const bar=document.getElementById('userInfoBar'); if(bar){ bar.innerHTML='<span class="text-amber-300 font-bold">'+(s.nama||s.username)+'</span><span class="text-gray-500">('+s.role+')</span><button onclick="doLogout()" class="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold">Logout</button>'; } if(s.role!=='admin'){ showAksesDitolak(s.role); } }
+window.addEventListener('DOMContentLoaded', ()=>{ const s=getSession(); if(!s){ showLoginOverlay(); } else { hideLoginOverlay(); cekAksesArsip(s); } });
+document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getElementById('loginOverlay') && document.getElementById('loginOverlay').style.display!=='none' && (e.target.id==='loginPass'||e.target.id==='loginUser')) doLogin(); });
+(function(){ window.kembaliKeOCR=function(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); return false; }; })();
+</script>
+<script>
+// [LOCK] GABUNGAN -> D1 (override LocalStorage). Cache in-memory, backend D1.
+window._gabunganCache = [];
+window.loadGabunganTersimpan = async function(){
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = {};
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch('/api/gabungan', { headers });
+    if(res.ok){
+      const j = await res.json();
+      const arr = Array.isArray(j.data) ? j.data : [];
+      window._gabunganCache = arr;
+    }
+  }catch(e){ console.warn('Gagal load gabungan dari D1:', e); }
+  try{ if(typeof renderDetailNota==='function') renderDetailNota(); }catch{}
+};
+window.getGabunganTersimpan = function(){ return window._gabunganCache || []; };
+window.simpanGabungan = async function(){
+  if(!detailNota || !detailNota._gabungSumber){ tampilkanToast('Buka hasil gabung dulu (centang checklist lalu Gabung)','error'); return; }
+  const entry = {
+    id: String(Date.now()),
+    tanggalSimpan: new Date().toISOString().slice(0,10),
+    fitur: detailNota._gabungFitur||detailNota.feature_type,
+    no_nota: detailNota.no_nota||'',
+    tanggalNota: detailNota.tanggal||'-',
+    nama_kapal: detailNota.nama_kapal||'-',
+    jumlahNota: detailNota._gabungCount||detailNota._gabungSumber.length,
+    jumlahBaris: (detailNota.items||[]).length,
+    headers: detailNota.headers||[],
+    items: detailNota.items||[],
+    _gabungSumber: detailNota._gabungSumber||[],
+    _gabungDari: detailNota._gabungDari||[]
+  };
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = { 'Content-Type':'application/json' };
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch('/api/gabungan', { method:'POST', headers, body: JSON.stringify(entry) });
+    const text = await res.text();
+    let j = {};
+    try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+    if(!res.ok || j.ok === false){
+      let msg = j.error || j.message || ('HTTP ' + res.status);
+      if(res.status===401) msg = 'Sesi habis (401). Logout lalu login lagi.';
+      tampilkanToast('Gagal simpan gabungan ke D1: ' + msg, 'error');
+      return;
+    }
+    window._gabunganCache.unshift(entry);
+    tampilkanToast('✅ Gabungan disimpan ke D1 ('+entry.jumlahNota+' nota • '+entry.jumlahBaris+' baris)','success');
+    renderDetailNota();
+  }catch(e){
+    tampilkanToast('Gagal simpan gabungan ke D1: ' + String(e.message||e), 'error');
+  }
+};
+window.hapusGabunganTersimpan = async function(id){
+  const ok = await showMsgbox('Hapus Gabungan?', 'Hapus data gabungan tersimpan ini?', 'Ya, Hapus');
+  if(!ok) return;
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = {};
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch('/api/gabungan?id='+encodeURIComponent(id), {method:'DELETE', headers});
+    if(!res.ok && res.status!==404){
+      tampilkanToast('Gagal hapus gabungan dari D1: HTTP '+res.status,'error');
+      return;
+    }
+  }catch(e){ tampilkanToast('Gagal hapus gabungan dari D1: '+String(e.message||e),'error'); return; }
+  window._gabunganCache = (window._gabunganCache||[]).filter(x=>String(x.id)!==String(id));
+  if(typeof gabungTersimpanPage!=='undefined' && gabungTersimpanPage>Math.max(1,Math.ceil(window._gabunganCache.length/20))) gabungTersimpanPage=Math.max(1,Math.ceil(window._gabunganCache.length/20));
+  tampilkanToast('Gabungan dihapus dari D1','success');
+  renderDetailNota();
+};
+// Load gabungan dari D1 saat halaman siap (bareng loadArsip)
+try{
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded', ()=>{ if(typeof loadGabunganTersimpan==='function') loadGabunganTersimpan(); });
+  } else {
+    if(typeof loadGabunganTersimpan==='function') loadGabunganTersimpan();
+  }
+}catch{}
+</script>
+
+<!-- MSGBOX Konfirmasi Hapus [LOCK] -->
+<div id="msgboxOverlay" class="fixed inset-0 z-[100001] bg-black/70 flex items-center justify-center px-4" style="display:none">
+  <div class="bg-gray-900 border border-amber-500/40 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+    <div class="flex items-center gap-3 mb-3">
+      <span class="w-10 h-10 rounded-full bg-red-500/15 border border-red-500/40 flex items-center justify-center text-red-400 text-xl">⚠️</span>
+      <h3 id="msgboxTitle" class="text-amber-300 font-bold text-base">Hapus Nota?</h3>
+    </div>
+    <p id="msgboxMessage" class="text-gray-300 text-sm leading-relaxed mb-5">Yakin hapus nota ini? Data yang terhapus tidak bisa dikembalikan.</p>
+    <div class="flex gap-2 justify-end">
+      <button id="msgboxCancel" class="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm font-semibold border border-gray-700">Batal</button>
+      <button id="msgboxConfirm" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-bold">Ya, Hapus</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- [LOCK] OVERRIDE FINAL - definisi di akhir menang atas definisi lama/proxy. Jangan dihapus. -->
+<script>
+window.getSession = function(){
   try{
     const h=window.location.hash||'';
     if(h.startsWith('#s=')){
@@ -1196,15 +1385,10 @@ function getSession(){
     if(s && s.username) return s;
   }catch{}
   return null;
-}
-function setSession(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
-function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} }
-function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
-function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
-function showLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
-function hideLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='none'; }
-function showAksesDitolak(role){ const o=document.getElementById('aksesDitolakOverlay'); const t=document.getElementById('aksesRoleTxt'); if(t) t.textContent=role||'-'; if(o) o.style.display='flex'; }
-async function doLogin(){
+};
+window.setSession = function(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} };
+window.clearSession = function(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} };
+window.doLogin = async function(){
   const u=(document.getElementById('loginUser')?.value||'').trim();
   const p=(document.getElementById('loginPass')?.value||'');
   const errEl=document.getElementById('loginError');
@@ -1233,30 +1417,103 @@ async function doLogin(){
   }catch(e){
     if(errEl){ errEl.textContent = 'Gagal login: ' + String(e.message||e) + ' — Cek koneksi / Functions.'; errEl.classList.remove('hidden'); }
   }
-}
-function doLogout(){ clearSession(); location.reload(); }
-function keHalamanUtama(){ const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); }
-function pergiKeKelolaUser(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href='kelola-user.html'+(s?sessionHash(s):''); return false; }
-function cekAksesArsip(s){ if(!s) return; const bar=document.getElementById('userInfoBar'); if(bar){ bar.innerHTML='<span class="text-amber-300 font-bold">'+(s.nama||s.username)+'</span><span class="text-gray-500">('+s.role+')</span><button onclick="doLogout()" class="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold">Logout</button>'; } if(s.role!=='admin'){ showAksesDitolak(s.role); } }
-window.addEventListener('DOMContentLoaded', ()=>{ const s=getSession(); if(!s){ showLoginOverlay(); } else { hideLoginOverlay(); cekAksesArsip(s); } });
-document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getElementById('loginOverlay') && document.getElementById('loginOverlay').style.display!=='none' && (e.target.id==='loginPass'||e.target.id==='loginUser')) doLogin(); });
-(function(){ window.kembaliKeOCR=function(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); return false; }; })();
+};
+window.showMsgbox = function(title, message, confirmText){
+  return new Promise((resolve)=>{
+    const ov=document.getElementById('msgboxOverlay');
+    const t=document.getElementById('msgboxTitle');
+    const m=document.getElementById('msgboxMessage');
+    const btnOk=document.getElementById('msgboxConfirm');
+    const btnCancel=document.getElementById('msgboxCancel');
+    if(!ov || !t || !m || !btnOk || !btnCancel){ resolve(confirm(message)); return; }
+    t.textContent=title||'Hapus?';
+    m.textContent=message||'Yakin hapus?';
+    btnOk.textContent=confirmText||'Ya, Hapus';
+    ov.style.display='flex';
+    const cleanup=(val)=>{
+      ov.style.display='none';
+      btnOk.onclick=null; btnCancel.onclick=null; ov.onclick=null;
+      resolve(val);
+    };
+    btnOk.onclick=()=>cleanup(true);
+    btnCancel.onclick=()=>cleanup(false);
+    ov.onclick=(e)=>{ if(e.target===ov) cleanup(false); };
+  });
+};
+window.loadArsip = async function(){
+  allData=[];
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = {};
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res=await fetch('/api/nota', { headers });
+    if(res.ok){
+      const j=await res.json();
+      const arr=Array.isArray(j.data)?j.data:(Array.isArray(j)?j:[]);
+      if(j.ok!==false && arr.length>=0){
+        const d1=arr.map(x=>{
+          let o={...x, _sumber:'D1'};
+          if(typeof x.data==='string'){ try{ const dd=JSON.parse(x.data); o={...o, ...dd}; }catch{} }
+          if(!o.items && Array.isArray(x.items)) o.items=x.items;
+          if(o.feature_type==='OTOMATIS' && (!o.headers || !o.headers.length)){
+            const first=(o.items||[])[0]; const n=first && first.rowVals ? first.rowVals.length : (Array.isArray(first)?first.length:0);
+            o.headers=Array.from({length:n},(_,i)=>'Kolom '+(i+1));
+          }
+          o.id=String(o.id??'');
+          return o;
+        });
+        allData=[...d1];
+      }
+    } else if(res.status===401){
+      console.warn('Arsip: Sesi habis (401). Logout lalu login lagi untuk lihat arsip D1.');
+      if(typeof tampilkanToast==='function') tampilkanToast('Sesi habis (401). Logout lalu login lagi untuk lihat arsip D1.','error');
+    }
+  }catch(e){ console.warn('Gagal load arsip dari D1:', e); }
+  allData=sortArsipByTanggal(allData, document.getElementById('sortBy')?.value||'TANGGAL_NOTA_DESC');
+  applyFilter();
+};
+window.hapusSatu = async function(idx){
+  const n=filtered[idx]; if(!n) return;
+  const ok = await showMsgbox('Hapus Nota?', 'Hapus nota '+(n.no_nota||'-')+'? Data yang terhapus tidak bisa dikembalikan.', 'Ya, Hapus');
+  if(!ok) return;
+  try{
+    if(n.id){
+      const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+      const headers = {};
+      if(token) headers['Authorization'] = 'Bearer ' + token;
+      const res = await fetch('/api/nota?id='+encodeURIComponent(n.id), {method:'DELETE', headers});
+      if(!res.ok && res.status!==404){
+        tampilkanToast('Gagal hapus dari D1: HTTP '+res.status,'error');
+        return;
+      }
+    }
+  }catch(e){ tampilkanToast('Gagal hapus dari D1: '+String(e.message||e),'error'); return; }
+  tampilkanToast('Nota dihapus dari D1','success');
+  try{ if(typeof gabungDipilih!=='undefined') gabungDipilih=gabungDipilih.filter(x=> String(x)!==String(n.id)); }catch{}
+  loadArsip();
+};
+window.hapusSemuaArsip = async function(){
+  const ok = await showMsgbox('Hapus SEMUA Arsip?', 'Hapus SEMUA arsip di D1? Data yang terhapus tidak bisa dikembalikan.', 'Ya, Hapus Semua');
+  if(!ok) return;
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = {};
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const ids=[...new Set(allData.map(x=>x.id).filter(Boolean))];
+    let gagal=0;
+    for(const id of ids){
+      try{
+        const res = await fetch('/api/nota?id='+encodeURIComponent(id), {method:'DELETE', headers});
+        if(!res.ok && res.status!==404) gagal++;
+      }catch{ gagal++; }
+    }
+    if(gagal>0){ tampilkanToast(gagal+' nota gagal dihapus dari D1. Coba lagi.','error'); loadArsip(); return; }
+  }catch(e){ tampilkanToast('Gagal hapus semua: '+String(e.message||e),'error'); return; }
+  if(typeof gabungDipilih!=='undefined') gabungDipilih=[];
+  tampilkanToast('Semua arsip dihapus dari D1','success');
+  loadArsip();
+};
 </script>
-
-<!-- MSGBOX Konfirmasi Hapus [LOCK] -->
-<div id="msgboxOverlay" class="fixed inset-0 z-[100001] bg-black/70 flex items-center justify-center px-4" style="display:none">
-  <div class="bg-gray-900 border border-amber-500/40 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
-    <div class="flex items-center gap-3 mb-3">
-      <span class="w-10 h-10 rounded-full bg-red-500/15 border border-red-500/40 flex items-center justify-center text-red-400 text-xl">⚠️</span>
-      <h3 id="msgboxTitle" class="text-amber-300 font-bold text-base">Hapus Nota?</h3>
-    </div>
-    <p id="msgboxMessage" class="text-gray-300 text-sm leading-relaxed mb-5">Yakin hapus nota ini? Data yang terhapus tidak bisa dikembalikan.</p>
-    <div class="flex gap-2 justify-end">
-      <button id="msgboxCancel" class="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm font-semibold border border-gray-700">Batal</button>
-      <button id="msgboxConfirm" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-bold">Ya, Hapus</button>
-    </div>
-  </div>
-</div>
 
 </body>
 </html>

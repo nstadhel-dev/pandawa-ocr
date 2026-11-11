@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
 <script>
-// [LOCK] WAJIB D1: LocalStorage HANYA untuk Gemini API Key (biar tanpa proxy). Selebihnya WAJIB D1.
+// [LOCK] WAJIB D1: LocalStorage HANYA untuk Gemini API Key. Selebihnya WAJIB D1.
 (function(){
   var ALLOWED = ['PANDAWA_API_KEYS_V14','PANDAWA_API_KEY_1','PANDAWA_API_KEY_2','PANDAWA_API_KEY_3','PANDAWA_KEYS_STD_V14','PANDAWA_API_KEYS_COUNT','pandawa_gemini_key'];
   try{
@@ -89,7 +89,113 @@
 </script>
 <body class="min-h-screen pb-12">
 <!-- PANDAWA SECURITY + D1 BRIDGE (Deploy) - BUKAN worker.js, ini script di HTML -->
-
+<script>
+// ===== 1. KEAMANAN: Matikan klik kanan + copas (copy/cut) =====
+// Paste di input TETAP diizinkan agar API Key bisa ditempel. Copy/cut dimatikan di semua tempat.
+(function(){
+  document.addEventListener('contextmenu', function(e){ e.preventDefault(); return false; });
+  document.addEventListener('copy', function(e){ e.preventDefault(); return false; });
+  document.addEventListener('cut', function(e){ e.preventDefault(); return false; });
+  document.addEventListener('dragstart', function(e){ e.preventDefault(); return false; });
+  document.addEventListener('keydown', function(e){
+    // Ctrl+C / Ctrl+X / Ctrl+U (view source) / F12 / Ctrl+Shift+I/J (devtools)
+    const k = (e.key || '').toLowerCase();
+    if((e.ctrlKey || e.metaKey) && (k === 'c' || k === 'x' || k === 'u')){ e.preventDefault(); return false; }
+    if(e.key === 'F12'){ e.preventDefault(); return false; }
+    if((e.ctrlKey || e.metaKey) && e.shiftKey && (k === 'i' || k === 'j' || k === 'c')){ e.preventDefault(); return false; }
+  });
+})();
+// ===== 2. GEMINI PROXY: Semua panggilan Gemini langsung dialihkan ke /api/gemini =====
+// Key TIDAK PERNAH keluar dari server. Browser hanya kirim gambar + prompt, server yang panggil Gemini pakai key dari D1.
+// Format response dikembalikan persis seperti Gemini asli, jadi kode lama tidak perlu diubah.
+(function(){
+  const _origFetch = window.fetch;
+  window.fetch = async function(url, opts){
+    const urlStr = String(url || '');
+    if(urlStr.includes('generativelanguage.googleapis.com')){
+      try{
+        const m = urlStr.match(/models\/([^:]+):generateContent/);
+        const model = m ? decodeURIComponent(m[1]) : 'gemini-2.0-flash';
+        let body = {};
+        try{ body = JSON.parse((opts && opts.body) || '{}'); }catch{}
+        const parts = (body && body.contents && body.contents[0] && body.contents[0].parts) || [];
+        let prompt = '', image = '';
+        for(const p of parts){
+          if(p && p.text) prompt += p.text;
+          if(p && p.inlineData && p.inlineData.data) image = p.inlineData.data;
+          if(p && p.inline_data && p.inline_data.data) image = p.inline_data.data;
+        }
+        const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+        const res = await _origFetch('/api/gemini', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({ image_base64: image, prompt: prompt, model: model })
+        });
+        const j = await res.json().catch(()=>({}));
+        if(!j.ok){
+          return new Response(JSON.stringify({ error: { message: j.error || 'Gemini proxy error' } }), { status: res.status || 502, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: j.text || '' }] } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }catch(e){
+        return new Response(JSON.stringify({ error: { message: String(e) } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+    return _origFetch(url, opts);
+  };
+})();
+// ===== 3. D1 BRIDGE: Login via D1 (dapat token), D1 jadi sumber utama, LocalStorage jadi cache cepat =====
+// Alur: Login -> D1 API (dapat token) -> token di sessionStorage -> API call pakai token.
+// Data: Tampil dari LocalStorage dulu (cepat), lalu sync dari D1 (fresh). Simpan: ke D1 dulu, lalu cache LocalStorage.
+window.PANDAWA_D1 = {
+  getToken: function(){ return sessionStorage.getItem('PANDAWA_TOKEN') || ''; },
+  setToken: function(t){ try{ if(t) sessionStorage.setItem('PANDAWA_TOKEN', t); else sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} },
+  api: async function(path, method, body){
+    const headers = { 'Content-Type': 'application/json' };
+    const tok = this.getToken();
+    if(tok) headers['Authorization'] = 'Bearer ' + tok;
+    const res = await fetch(path, { method: method || 'GET', headers, body: body ? JSON.stringify(body) : undefined });
+    const j = await res.json().catch(()=>({ ok:false, error:'Response bukan JSON' }));
+    if(!res.ok) throw new Error(j.error || ('HTTP ' + res.status));
+    return j;
+  },
+  // Sync D1 -> LocalStorage (D1 sumber utama). Dipanggil saat halaman load (setelah login).
+  syncFromD1: async function(){
+    try{
+      const tok = this.getToken();
+      if(!tok) return; // belum login, skip
+      // Arsip dari D1
+      const r = await this.api('/api/nota', 'GET');
+      if(r && r.ok && Array.isArray(r.data)){
+        try{ localStorage.setItem('PANDAWA_ARCHIVE_V14', JSON.stringify(r.data)); }catch{}
+      }
+    }catch(e){ console.warn('Sync D1 gagal (pakai cache LocalStorage):', e.message); }
+  }
+};
+// Bungkus doLogin lama: setelah login LocalStorage sukses, coba login D1 untuk dapat token.
+window.addEventListener('DOMContentLoaded', function(){
+  try{
+    const _origDoLogin = window.doLogin;
+    if(typeof _origDoLogin === 'function' && !window.__d1LoginWrapped){
+      window.__d1LoginWrapped = true;
+      window.doLogin = async function(){
+        const result = await _origDoLogin.apply(this, arguments);
+        try{
+          const u = (document.getElementById('loginUser')?.value || '').trim();
+          const p = (document.getElementById('loginPass')?.value || '');
+          if(u && p){
+            const res = await fetch('/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username:u, password:p }) });
+            const j = await res.json().catch(()=>({}));
+            if(j.ok && j.token){ window.PANDAWA_D1.setToken(j.token); window.PANDAWA_D1.syncFromD1(); }
+          }
+        }catch(e){ console.warn('D1 login gagal (pakai LocalStorage):', e.message); }
+        return result;
+      };
+    }
+  }catch(e){ console.warn('D1 bridge login wrap gagal:', e); }
+  // Saat halaman load & sudah ada token, sync D1
+  try{ if(window.PANDAWA_D1.getToken()) window.PANDAWA_D1.syncFromD1(); }catch{}
+});
+</script>
 <!-- LOGIN DIMATIKAN SEMENTARA - tidak ada guard login lagi -->
 <!-- PANDAWA PRELOAD AWAL - tampil diawal agar keliatan keren, hilang otomatis. Tidak ganggu logika kunci. -->
 <style>
@@ -2681,7 +2787,7 @@ async function tampilkanNotaDariArsip(nota){
         // Bersihkan antrian yang sama no_nota
         try{ let q=JSON.parse(localStorage.getItem(LS_QUEUE)||'[]'); q=q.filter(x=>x.payload?.no_nota!==payload.no_nota); localStorage.setItem(LS_QUEUE, JSON.stringify(q)); }catch{}
       } else {
-        tampilkanToast('Functions belum ter-deploy (/api/nota dibalas HTML). Pakai Git, bukan Direct Upload.'+lastErr,'error');
+        tampilkanToast('D1 belum terpasang Worker (lihat worker.js). Data TIDAK disimpan ke LocalStorage (Wajib D1) + antrian sync. Error: '+lastErr,'error');
         try{ const q=JSON.parse(localStorage.getItem(LS_QUEUE)||'[]'); q.push({payload, time:Date.now()}); localStorage.setItem(LS_QUEUE, JSON.stringify(q)); }catch{}
         // Tampilkan cara perbaiki
         console.warn('D1 FIX: Deploy worker.js ke Cloudflare Workers dan binding D1. Lihat file worker.js');
@@ -3038,7 +3144,27 @@ const AUTH_USERS_KEY='PANDAWA_USERS_V14';
 const AUTH_SESSION_KEY='PANDAWA_SESSION_V14';
 function getUsers(){ try{ let u=JSON.parse(localStorage.getItem(AUTH_USERS_KEY)||'[]'); if(!u.length){ u=[{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} } return u; }catch{ return [{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; } }
 function saveUsers(u){ try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} }
-function getSession(){
+function getSession(){ try{ const h=window.location.hash||''; if(h.startsWith('#s=')){ let b=h.slice(3).replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4) b+='='; const s=JSON.parse(decodeURIComponent(escape(atob(b)))); if(s && s.username){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} try{ history.replaceState({},'',window.location.pathname+window.location.search); }catch{} return s; } } }catch{} try{ const s=JSON.parse(localStorage.getItem(AUTH_SESSION_KEY)||'null'); if(s && s.username) return s; }catch{} return null; }
+function setSession(s){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
+function clearSession(){ try{ localStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
+function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
+function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
+function showLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
+function hideLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='none'; }
+function showAksesDitolak(role){ const o=document.getElementById('aksesDitolakOverlay'); const t=document.getElementById('aksesRoleTxt'); if(t) t.textContent=role||'-'; if(o) o.style.display='flex'; }
+function doLogin(){ const u=(document.getElementById('loginUser')?.value||'').trim(); const p=(document.getElementById('loginPass')?.value||''); const s=loginUser(u,p); if(!s){ const e=document.getElementById('loginError'); if(e) e.classList.remove('hidden'); return; } const e=document.getElementById('loginError'); if(e) e.classList.add('hidden'); hideLoginOverlay(); applyRoleUI(s); if(typeof tampilkanToast==='function') tampilkanToast('Selamat datang, '+(s.nama||s.username)+' ('+s.role+')','success'); }
+function doLogout(){ clearSession(); location.reload(); }
+function keHalamanUtama(){ const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); }
+function pergiKeKelolaUser(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href='kelola-user.html'+(s?sessionHash(s):''); return false; }
+function applyRoleUI(s){ if(!s) return; const bar=document.getElementById('userInfoBar'); if(bar){ bar.innerHTML='<span class="text-amber-300 font-bold">'+(s.nama||s.username)+'</span><span class="text-gray-500">('+s.role+')</span><button onclick="doLogout()" class="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold">Logout</button>'; } if(s.role==='user'){ const btn=document.getElementById('btnSimpanD1'); if(btn){ btn.disabled=true; btn.classList.add('opacity-40','pointer-events-none'); btn.title='Hanya Admin yang bisa Simpan Data'; } const kb=document.getElementById('btnSetApiKey'); if(kb){ kb.disabled=true; kb.classList.add('opacity-40','pointer-events-none'); kb.title='Hanya Admin yang bisa Set Gemini API Key'; } ['btnArsipNotaAtas','btnArsipNota'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display='none'; }); const lk=document.getElementById('linkKelolaUser'); if(lk) lk.style.display='none'; } }
+window.addEventListener('DOMContentLoaded', ()=>{ const s=getSession(); if(!s){ showLoginOverlay(); } else { hideLoginOverlay(); applyRoleUI(s); } });
+document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getElementById('loginOverlay') && document.getElementById('loginOverlay').style.display!=='none' && (e.target.id==='loginPass'||e.target.id==='loginUser')) doLogin(); });
+(function(){ window.pergiKeArsip=function(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href=fileSaudara('arsip')+(s?sessionHash(s):''); return false; }; })();
+</script>
+
+<!-- [LOCK] OVERRIDE FINAL - definisi di akhir menang atas definisi lama/proxy. Jangan dihapus. -->
+<script>
+window.getSession = function(){
   try{
     const h=window.location.hash||'';
     if(h.startsWith('#s=')){
@@ -3057,15 +3183,10 @@ function getSession(){
     if(s && s.username) return s;
   }catch{}
   return null;
-}
-function setSession(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
-function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} }
-function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
-function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
-function showLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
-function hideLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='none'; }
-function showAksesDitolak(role){ const o=document.getElementById('aksesDitolakOverlay'); const t=document.getElementById('aksesRoleTxt'); if(t) t.textContent=role||'-'; if(o) o.style.display='flex'; }
-async function doLogin(){
+};
+window.setSession = function(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} };
+window.clearSession = function(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} };
+window.doLogin = async function(){
   const u=(document.getElementById('loginUser')?.value||'').trim();
   const p=(document.getElementById('loginPass')?.value||'');
   const errEl=document.getElementById('loginError');
@@ -3090,18 +3211,76 @@ async function doLogin(){
     if(typeof hideLoginOverlay==='function') hideLoginOverlay();
     if(typeof applyRoleUI==='function') applyRoleUI(s);
     if(typeof tampilkanToast==='function') tampilkanToast('Selamat datang, '+(s.nama||s.username)+' ('+s.role+')','success');
-    
   }catch(e){
     if(errEl){ errEl.textContent = 'Gagal login: ' + String(e.message||e) + ' — Cek koneksi / Functions.'; errEl.classList.remove('hidden'); }
   }
-}
-function doLogout(){ clearSession(); location.reload(); }
-function keHalamanUtama(){ const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); }
-function pergiKeKelolaUser(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href='kelola-user.html'+(s?sessionHash(s):''); return false; }
-function applyRoleUI(s){ if(!s) return; const bar=document.getElementById('userInfoBar'); if(bar){ bar.innerHTML='<span class="text-amber-300 font-bold">'+(s.nama||s.username)+'</span><span class="text-gray-500">('+s.role+')</span><button onclick="doLogout()" class="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold">Logout</button>'; } if(s.role==='user'){ const btn=document.getElementById('btnSimpanD1'); if(btn){ btn.disabled=true; btn.classList.add('opacity-40','pointer-events-none'); btn.title='Hanya Admin yang bisa Simpan Data'; } const kb=document.getElementById('btnSetApiKey'); if(kb){ kb.disabled=true; kb.classList.add('opacity-40','pointer-events-none'); kb.title='Hanya Admin yang bisa Set Gemini API Key'; } ['btnArsipNotaAtas','btnArsipNota'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display='none'; }); const lk=document.getElementById('linkKelolaUser'); if(lk) lk.style.display='none'; } }
-window.addEventListener('DOMContentLoaded', ()=>{ const s=getSession(); if(!s){ showLoginOverlay(); } else { hideLoginOverlay(); applyRoleUI(s); } });
-document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getElementById('loginOverlay') && document.getElementById('loginOverlay').style.display!=='none' && (e.target.id==='loginPass'||e.target.id==='loginUser')) doLogin(); });
-(function(){ window.pergiKeArsip=function(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href=fileSaudara('arsip')+(s?sessionHash(s):''); return false; }; })();
+};
+window.simpanDataKeD1 = async function(){
+  if(masterDataRows.length===0 && !currentBase64Image){ tampilkanToast('Tidak ada data untuk disimpan!','error'); return; }
+  let imgForD1 = currentBase64Image||'';
+  if(imgForD1){
+    try{
+      const im=new Image();
+      imgForD1 = await new Promise((res)=>{
+        im.onload=()=>{
+          const tryCompress=(maxW, quality)=>{
+            let w=im.width, h=im.height;
+            if(w>maxW||h>maxW){ if(w>h){ h=Math.round(h*maxW/w); w=maxW; } else { w=Math.round(w*maxW/h); h=maxW; } }
+            const c=document.createElement('canvas'); c.width=w; c.height=h;
+            c.getContext('2d').drawImage(im,0,0,w,h);
+            return c.toDataURL('image/jpeg', quality);
+          };
+          let out = tryCompress(700, 0.5);
+          if(out.length > 300000) out = tryCompress(500, 0.4);
+          if(out.length > 300000) out = tryCompress(400, 0.35);
+          res(out);
+        };
+        im.onerror=()=>res(currentBase64Image.slice(0,300000));
+        im.src=currentBase64Image;
+      });
+    }catch{ imgForD1 = currentBase64Image.slice(0,300000); }
+  }
+  const payload={
+    id: String(Date.now()),
+    feature_type: currentFormatNota,
+    no_nota: document.getElementById('metaNota').value||'',
+    tanggal: document.getElementById('metaTanggal').value||'',
+    nama_kapal: document.getElementById('metaKapal').value||'',
+    image_base64: imgForD1,
+    image_url: imgForD1,
+    status:'saved',
+    created_at: new Date().toISOString(),
+    items: masterDataRows,
+    resiko1: window.resiko1Val||0,
+    resiko2: window.resiko2Val||0
+  };
+  const btn=document.getElementById('btnSimpanD1');
+  if(btn){ btn.disabled=true; btn.innerHTML='<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Simpan ke D1...'; try{ lucide.createIcons(); }catch{} }
+  try{
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = { 'Content-Type':'application/json' };
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res = await fetch('/api/nota', { method:'POST', headers: headers, body: JSON.stringify(payload) });
+    const text = await res.text();
+    let j = {};
+    try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+    if(!res.ok || j.ok === false){
+      let msg = j.error || j.message || ('HTTP ' + res.status);
+      if(res.status===405 || (text && text.indexOf('<!DOCTYPE')>=0)) msg = 'Functions belum ter-deploy (/api/nota dibalas HTML). Pakai Git, bukan Direct Upload.';
+      else if(res.status===401) msg = 'Sesi habis (401). Logout lalu login lagi.';
+      else if(res.status===404) msg = 'API /api/nota tidak ditemukan (404). Functions belum ter-deploy.';
+      tampilkanToast('Gagal simpan ke D1: ' + msg + ' — Data TIDAK disimpan ke LocalStorage (Wajib D1).','error');
+      return;
+    }
+    tampilkanToast('Tersimpan di D1! No Nota: ' + (payload.no_nota||'-'),'success');
+    try{ masterDataRows=[]; if(typeof renderTabel==='function') renderTabel(); if(typeof updateTotal==='function') updateTotal(); }catch{}
+  }catch(e){
+    tampilkanToast('Gagal simpan ke D1: ' + String(e.message||e) + ' — Cek koneksi / Functions. Data TIDAK disimpan ke LocalStorage (Wajib D1).','error');
+  }finally{
+    if(btn){ btn.disabled=false; btn.innerHTML='<i data-lucide="save" class="w-4 h-4"></i> Simpan Data ke D1'; try{ lucide.createIcons(); }catch{} }
+  }
+};
 </script>
+
 </body>
 </html>
