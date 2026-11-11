@@ -348,7 +348,7 @@
                         </div>
                     </div>
                     <div class="text-center space-y-1">
-                        <p class="text-sm font-bold text-amber-300 tracking-wider">SEDANG MEMPROSES NOTA...</p>
+                        <p class="text-sm font-bold text-amber-300 tracking-wider">AI SEDANG MEMPROSES NOTA...</p>
                         <p id="preloaderSubtext" class="text-xs text-gray-400">Ekstraksi data presisi kilat...</p>
                     </div>
                 </div>
@@ -2605,10 +2605,13 @@ async function tampilkanNotaDariArsip(nota){
   // 3) tidak ada fallback jika D1 offline
   // Solusi V6: kirim image terkompres (max 500KB), coba 3 endpoint, selalu simpan LocalStorage dulu, antrian auto-retry
   window.simpanDataKeD1=async function(){
-    // [LOCK] WAJIB D1. LocalStorage HANYA untuk Gemini Key. Data (nota) WAJIB ke D1.
     if(masterDataRows.length===0 && !currentBase64Image){ tampilkanToast('Tidak ada data untuk disimpan!','error'); return; }
+
+    // Kompres image untuk D1 agar tidak gagal 413 / D1 TEXT limit
     let imgForD1 = currentBase64Image||'';
     if(imgForD1 && imgForD1.length>400000){
+      // Ambil versi lebih kecil: potong agar tetap valid JPEG preview, tapi arsip di LS tetap full
+      // Kita kirim thumbnail: resize via canvas jika perlu, fallback potong
       try{
         const im=new Image();
         imgForD1 = await new Promise((res)=>{
@@ -2624,8 +2627,9 @@ async function tampilkanNotaDariArsip(nota){
         });
       }catch{ imgForD1 = currentBase64Image.slice(0,400000); }
     }
+
     const payload={
-      id: String(Date.now()),
+      id: Date.now(),
       feature_type: currentFormatNota,
       no_nota: document.getElementById('metaNota').value||'',
       tanggal: document.getElementById('metaTanggal').value||'',
@@ -2638,32 +2642,53 @@ async function tampilkanNotaDariArsip(nota){
       resiko1: window.resiko1Val||0,
       resiko2: window.resiko2Val||0
     };
-    const btn=document.getElementById('btnSimpanD1');
-    if(btn){ btn.disabled=true; btn.innerHTML='<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Simpan ke D1...'; try{ lucide.createIcons(); }catch{} }
+
+    // 1. SIMPAN LOCALSTORAGE DULU - V10: PAKAI THUMBNAIL KECIL, BUKAN FOTO FULL
     try{
-      const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
-      const headers = { 'Content-Type':'application/json' };
-      if(token) headers['Authorization'] = 'Bearer ' + token;
-      const res = await fetch('/api/nota', { method:'POST', headers: headers, body: JSON.stringify(payload) });
-      const text = await res.text();
-      let j = {};
-      try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
-      if(!res.ok || j.ok === false){
-        let msg = j.error || j.message || ('HTTP ' + res.status);
-        if(res.status===405 || (text && text.indexOf('<!DOCTYPE')>=0)) msg = 'Functions belum ter-deploy (/api/nota dibalas HTML). Pakai Git, bukan Direct Upload.';
-        else if(res.status===401) msg = 'Sesi habis (401). Logout lalu login lagi.';
-        else if(res.status===404) msg = 'API /api/nota tidak ditemukan (404). Functions belum ter-deploy.';
-        tampilkanToast('Gagal simpan ke D1: ' + msg + ' — Data TIDAK disimpan ke LocalStorage (Wajib D1).','error');
-        return;
-      }
-      tampilkanToast('Tersimpan di D1! No Nota: ' + (payload.no_nota||'-'),'success');
-      try{ masterDataRows=[]; if(typeof renderTabel==='function') renderTabel(); if(typeof updateTotal==='function') updateTotal(); }catch{}
+      let archive=getArchive();
+      const idx=archive.findIndex(a=>a.no_nota===payload.no_nota && a.feature_type===payload.feature_type && payload.no_nota!=='');
+      // Thumbnail 400px untuk arsip (hemat ~15KB, bukan 100-300KB)
+      const thumb = await makeThumbnail(currentBase64Image||'', 400, 0.5);
+      const archivePayload={...payload, image_base64: thumb, image_url: thumb};
+      if(idx>-1){ archive[idx]=archivePayload; } else { archive.unshift(archivePayload); }
+      archive=sortByTanggalNota(archive); if(archive.length>100) archive=archive.slice(0,100);
+      const ok=setArchive(archive);
+      savePro();
+      if(ok) tampilkanToast(`Tersimpan di LocalStorage! Tanggal Nota: ${formatTanggalNotaForDisplay(payload.tanggal)} • Total arsip: ${archive.length} nota`,'success');
+      else tampilkanToast('LocalStorage penuh, auto-cleanup dilakukan. Data tetap dikirim ke D1.','error');
     }catch(e){
-      tampilkanToast('Gagal simpan ke D1: ' + String(e.message||e) + ' — Cek koneksi / Functions. Data TIDAK disimpan ke LocalStorage (Wajib D1).','error');
-    }finally{
-      if(btn){ btn.disabled=false; btn.innerHTML='<i data-lucide="save" class="w-4 h-4"></i> Simpan Data ke D1'; try{ lucide.createIcons(); }catch{} }
+      tampilkanToast('Gagal simpan LocalStorage: '+e.message+' — tapi tetap coba kirim ke D1','error');
+      // JANGAN return - tetap lanjut ke D1, jangan batalkan simpan
     }
-};
+
+    // 2. SYNC KE D1 - COBA 3 ENDPOINT
+    const btn=document.getElementById('btnSimpanD1');
+    if(btn){ btn.disabled=true; const old=btn.innerHTML; btn.innerHTML=`<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Sync ke D1...`; lucide.createIcons();
+      let d1Success=false; let lastErr='';
+      const endpoints=['/api/upload','/api/nota','/api/save'];
+      for(const ep of endpoints){
+        try{
+          const res=await fetch(ep,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+          const text=await res.text();
+          let json={}; try{ json=JSON.parse(text); }catch{ json={raw:text}; }
+          if(res.ok && (json.success!==false)){
+            d1Success=true; break;
+          } else { lastErr = json.error||json.message||('HTTP '+res.status+' '+text.slice(0,100)); }
+        }catch(e){ lastErr=e.message; }
+      }
+      if(d1Success){
+        tampilkanToast('Sync ke D1 BERHASIL! + LocalStorage OK','success');
+        // Bersihkan antrian yang sama no_nota
+        try{ let q=JSON.parse(localStorage.getItem(LS_QUEUE)||'[]'); q=q.filter(x=>x.payload?.no_nota!==payload.no_nota); localStorage.setItem(LS_QUEUE, JSON.stringify(q)); }catch{}
+      } else {
+        tampilkanToast('Functions belum ter-deploy (/api/nota dibalas HTML). Pakai Git, bukan Direct Upload.'+lastErr,'error');
+        try{ const q=JSON.parse(localStorage.getItem(LS_QUEUE)||'[]'); q.push({payload, time:Date.now()}); localStorage.setItem(LS_QUEUE, JSON.stringify(q)); }catch{}
+        // Tampilkan cara perbaiki
+        console.warn('D1 FIX: Deploy worker.js ke Cloudflare Workers dan binding D1. Lihat file worker.js');
+      }
+      btn.disabled=false; btn.innerHTML=old; lucide.createIcons();
+    }
+  };
 
   // Auto retry queue saat online
   async function retryQueue(){
@@ -2993,12 +3018,12 @@ console.log('FINAL LOCKED SUPER CEPAT AKTIF: maxTokens 2048, timeout 12s, model 
   <div class="bg-gray-900 border border-amber-500/30 rounded-2xl p-6 w-full max-w-sm mx-4">
     <div class="flex items-center gap-3 mb-4"><img src="data:image/png;base64,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" alt="Pandawa" class="h-12 w-auto"><div><h2 class="text-lg font-bold text-amber-300">PANDAWA OCR</h2><p class="text-xs text-gray-400">Silakan login</p></div></div>
     <label class="text-xs text-gray-400">Username</label>
-    <input id="loginUser" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-amber-500 text-gray-100" placeholder="" autocomplete="username">
+    <input id="loginUser" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-amber-500 text-gray-100" placeholder="admin" autocomplete="username">
     <label class="text-xs text-gray-400">Password</label>
-    <input id="loginPass" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-amber-500 text-gray-100" placeholder="" autocomplete="current-password">
+    <input id="loginPass" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-amber-500 text-gray-100" placeholder="12345" autocomplete="current-password">
     <p id="loginError" class="text-xs text-red-400 mb-2 hidden">Username / password salah</p>
     <button onclick="doLogin()" class="w-full bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold py-2 rounded-lg text-sm">Login</button>
-    <p class="text-[10px] text-gray-500 mt-3 text-center">Silahkan Login User</p>
+    <p class="text-[10px] text-gray-500 mt-3 text-center">Default: admin / 12345 — ganti password di Kelola User</p>
   </div>
 </div>
 <div id="aksesDitolakOverlay" class="fixed inset-0 z-[100000] bg-gray-950/95 flex items-center justify-center" style="display:none">
@@ -3060,11 +3085,12 @@ async function doLogin(){
     const user = j.user || { username:u, role:'user', nama:u };
     const s = { username:user.username, role:user.role, nama:user.nama||user.username, loginAt:Date.now() };
     try{ sessionStorage.setItem('PANDAWA_TOKEN', token); }catch{}
-    try{ if(typeof setSession==='function') setSession(s); else sessionStorage.setItem('PANDAWA_SESSION_V14', JSON.stringify(s)); }catch{}
+    try{ sessionStorage.setItem('PANDAWA_SESSION_V14', JSON.stringify(s)); }catch{}
     if(errEl) errEl.classList.add('hidden');
-    hideLoginOverlay();
-    applyRoleUI(s);
+    if(typeof hideLoginOverlay==='function') hideLoginOverlay();
+    if(typeof applyRoleUI==='function') applyRoleUI(s);
     if(typeof tampilkanToast==='function') tampilkanToast('Selamat datang, '+(s.nama||s.username)+' ('+s.role+')','success');
+    if(fname!=='index.html'){ try{ window.location.reload(); }catch{} }
   }catch(e){
     if(errEl){ errEl.textContent = 'Gagal login: ' + String(e.message||e) + ' — Cek koneksi / Functions.'; errEl.classList.remove('hidden'); }
   }
