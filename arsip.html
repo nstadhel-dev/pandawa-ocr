@@ -1142,22 +1142,51 @@ const AUTH_USERS_KEY='PANDAWA_USERS_V14';
 const AUTH_SESSION_KEY='PANDAWA_SESSION_V14';
 function getUsers(){ try{ let u=JSON.parse(localStorage.getItem(AUTH_USERS_KEY)||'[]'); if(!u.length){ u=[{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} } return u; }catch{ return [{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; } }
 function saveUsers(u){ try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} }
-function getSession(){ try{ const h=window.location.hash||''; if(h.startsWith('#s=')){ let b=h.slice(3).replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4) b+='='; const s=JSON.parse(decodeURIComponent(escape(atob(b)))); if(s && s.username){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} try{ history.replaceState({},'',window.location.pathname+window.location.search); }catch{} return s; } } }catch{} try{ const s=JSON.parse(sessionStorage.getItem(AUTH_SESSION_KEY)||'null'); if(s && s.username) return s; }catch{} return null; }
-function setSession(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
-function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
+function getSession(){ try{ const h=window.location.hash||''; if(h.startsWith('#s=')){ let b=h.slice(3).replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4) b+='='; const s=JSON.parse(decodeURIComponent(escape(atob(b)))); if(s && s.username){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} try{ history.replaceState({},'',window.location.pathname+window.location.search); }catch{} return s; } } }catch{} try{ const s=JSON.parse(localStorage.getItem(AUTH_SESSION_KEY)||'null'); if(s && s.username) return s; }catch{} return null; }
+function setSession(s){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
+function clearSession(){ try{ localStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
 function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
 function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
 function showLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
 function hideLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='none'; }
 function showAksesDitolak(role){ const o=document.getElementById('aksesDitolakOverlay'); const t=document.getElementById('aksesRoleTxt'); if(t) t.textContent=role||'-'; if(o) o.style.display='flex'; }
-function doLogin(){ const u=(document.getElementById('loginUser')?.value||'').trim(); const p=(document.getElementById('loginPass')?.value||''); const s=loginUser(u,p); if(!s){ const e=document.getElementById('loginError'); if(e) e.classList.remove('hidden'); return; } const e=document.getElementById('loginError'); if(e) e.classList.add('hidden'); hideLoginOverlay(); cekAksesArsip(s); if(typeof tampilkanToast==='function') tampilkanToast('Selamat datang, '+(s.nama||s.username)+' ('+s.role+')','success'); }
+async function doLogin(){
+  const u=(document.getElementById('loginUser')?.value||'').trim();
+  const p=(document.getElementById('loginPass')?.value||'');
+  const errEl=document.getElementById('loginError');
+  if(!u || !p){ if(errEl){ errEl.textContent='Username & password wajib.'; errEl.classList.remove('hidden'); } return; }
+  try{
+    const res = await fetch('/api/auth?action=login', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ username:u, password:p }) });
+    const text = await res.text();
+    let j = {};
+    try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+    if(!res.ok || j.ok === false){
+      let msg = j.error || j.message || ('HTTP ' + res.status);
+      if(res.status===405 || (text && text.indexOf('<!DOCTYPE')>=0)) msg = 'Functions belum ter-deploy (/api/auth dibalas HTML). Pakai Git, bukan Direct Upload.';
+      if(errEl){ errEl.textContent = msg; errEl.classList.remove('hidden'); }
+      return;
+    }
+    const token = j.token || '';
+    const user = j.user || { username:u, role:'user', nama:u };
+    const s = { username:user.username, role:user.role, nama:user.nama||user.username, loginAt:Date.now() };
+    try{ sessionStorage.setItem('PANDAWA_TOKEN', token); }catch{}
+    try{ sessionStorage.setItem('PANDAWA_SESSION_V14', JSON.stringify(s)); }catch{}
+    if(errEl) errEl.classList.add('hidden');
+    if(typeof hideLoginOverlay==='function') hideLoginOverlay();
+    if(typeof applyRoleUI==='function') applyRoleUI(s);
+    if(typeof tampilkanToast==='function') tampilkanToast('Selamat datang, '+(s.nama||s.username)+' ('+s.role+')','success');
+    try{ window.location.reload(); }catch{}
+  }catch(e){
+    if(errEl){ errEl.textContent = 'Gagal login: ' + String(e.message||e) + ' — Cek koneksi / Functions.'; errEl.classList.remove('hidden'); }
+  }
+}
 function doLogout(){ clearSession(); location.reload(); }
 function keHalamanUtama(){ const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); }
 function pergiKeKelolaUser(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href='kelola-user.html'+(s?sessionHash(s):''); return false; }
 function cekAksesArsip(s){ if(!s) return; const bar=document.getElementById('userInfoBar'); if(bar){ bar.innerHTML='<span class="text-amber-300 font-bold">'+(s.nama||s.username)+'</span><span class="text-gray-500">('+s.role+')</span><button onclick="doLogout()" class="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold">Logout</button>'; } if(s.role!=='admin'){ showAksesDitolak(s.role); } }
 window.addEventListener('DOMContentLoaded', ()=>{ const s=getSession(); if(!s){ showLoginOverlay(); } else { hideLoginOverlay(); cekAksesArsip(s); } });
 document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getElementById('loginOverlay') && document.getElementById('loginOverlay').style.display!=='none' && (e.target.id==='loginPass'||e.target.id==='loginUser')) doLogin(); });
-(function(){ window.kembaliKeOCR=function(e){ try{ if(e) e.preventDefault(); }catch{} try{ var s=(typeof getSession==='function')?getSession():null; var h=(s && typeof sessionHash==='function')?sessionHash(s):''; window.location.href=fileSaudara('index')+h; }catch{ window.location.href='index.html'; } return false; }; })();
+(function(){ window.kembaliKeOCR=function(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); return false; }; })();
 </script>
 </body>
 </html>

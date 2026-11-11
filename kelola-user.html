@@ -193,16 +193,45 @@ const AUTH_USERS_KEY='PANDAWA_USERS_V14';
 const AUTH_SESSION_KEY='PANDAWA_SESSION_V14';
 function getUsers(){ try{ let u=JSON.parse(localStorage.getItem(AUTH_USERS_KEY)||'[]'); if(!u.length){ u=[{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} } return u; }catch{ return [{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; } }
 function saveUsers(u){ try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} }
-function getSession(){ try{ const h=window.location.hash||''; if(h.startsWith('#s=')){ let b=h.slice(3).replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4) b+='='; const s=JSON.parse(decodeURIComponent(escape(atob(b)))); if(s && s.username){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} try{ history.replaceState({},'',window.location.pathname+window.location.search); }catch{} return s; } } }catch{} try{ const s=JSON.parse(sessionStorage.getItem(AUTH_SESSION_KEY)||'null'); if(s && s.username) return s; }catch{} return null; }
-function setSession(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
-function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
+function getSession(){ try{ const h=window.location.hash||''; if(h.startsWith('#s=')){ let b=h.slice(3).replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4) b+='='; const s=JSON.parse(decodeURIComponent(escape(atob(b)))); if(s && s.username){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} try{ history.replaceState({},'',window.location.pathname+window.location.search); }catch{} return s; } } }catch{} try{ const s=JSON.parse(localStorage.getItem(AUTH_SESSION_KEY)||'null'); if(s && s.username) return s; }catch{} return null; }
+function setSession(s){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
+function clearSession(){ try{ localStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
 function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
 function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
 function fileSaudara(target){ try{ const f=(window.location.pathname.split('/').pop()||''); const m=f.match(/^(.*?)(arsip|index|kelolauser)([-_]REV\d+)?(\.html?)$/i); if(m){ const pref=m[1]||''; const rev=m[3]||''; const ext=m[4]||'.html'; const isCap = target==='index' ? /^Arsip/.test(f) : target==='arsip' ? /^Index/.test(f) : /^Index/.test(f); const nama = isCap ? (target==='index'?'Index':target==='arsip'?'Arsip':'KelolaUser') : target; return pref + nama + rev + ext; } }catch{} return target+'.html'; }
 function showLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
 function hideLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='none'; }
 function showAksesDitolak(role){ const o=document.getElementById('aksesDitolakOverlay'); const t=document.getElementById('aksesRoleTxt'); if(t) t.textContent=role||'-'; if(o) o.style.display='flex'; }
-function doLogin(){ const u=(document.getElementById('loginUser')?.value||'').trim(); const p=(document.getElementById('loginPass')?.value||''); const s=loginUser(u,p); if(!s){ const e=document.getElementById('loginError'); if(e) e.classList.remove('hidden'); return; } const e=document.getElementById('loginError'); if(e) e.classList.add('hidden'); hideLoginOverlay(); cekAkses(s); }
+async function doLogin(){
+  const u=(document.getElementById('loginUser')?.value||'').trim();
+  const p=(document.getElementById('loginPass')?.value||'');
+  const errEl=document.getElementById('loginError');
+  if(!u || !p){ if(errEl){ errEl.textContent='Username & password wajib.'; errEl.classList.remove('hidden'); } return; }
+  try{
+    const res = await fetch('/api/auth?action=login', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ username:u, password:p }) });
+    const text = await res.text();
+    let j = {};
+    try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+    if(!res.ok || j.ok === false){
+      let msg = j.error || j.message || ('HTTP ' + res.status);
+      if(res.status===405 || (text && text.indexOf('<!DOCTYPE')>=0)) msg = 'Functions belum ter-deploy (/api/auth dibalas HTML). Pakai Git, bukan Direct Upload.';
+      if(errEl){ errEl.textContent = msg; errEl.classList.remove('hidden'); }
+      return;
+    }
+    const token = j.token || '';
+    const user = j.user || { username:u, role:'user', nama:u };
+    const s = { username:user.username, role:user.role, nama:user.nama||user.username, loginAt:Date.now() };
+    try{ sessionStorage.setItem('PANDAWA_TOKEN', token); }catch{}
+    try{ sessionStorage.setItem('PANDAWA_SESSION_V14', JSON.stringify(s)); }catch{}
+    if(errEl) errEl.classList.add('hidden');
+    if(typeof hideLoginOverlay==='function') hideLoginOverlay();
+    if(typeof applyRoleUI==='function') applyRoleUI(s);
+    if(typeof tampilkanToast==='function') tampilkanToast('Selamat datang, '+(s.nama||s.username)+' ('+s.role+')','success');
+    try{ window.location.reload(); }catch{}
+  }catch(e){
+    if(errEl){ errEl.textContent = 'Gagal login: ' + String(e.message||e) + ' — Cek koneksi / Functions.'; errEl.classList.remove('hidden'); }
+  }
+}
 function doLogout(){ clearSession(); location.reload(); }
 function keHalamanUtama(){ const s=getSession(); window.location.href='index.html'+(s?sessionHash(s):''); } // REV29: Index-nya REV29, bukan REV1, jadi hardcode (fileSaudara salah kalau REV beda)
 function cekAkses(s){ if(!s) return; const bar=document.getElementById('userInfoBar'); if(bar){ bar.innerHTML='<span class="text-amber-300 font-bold">'+(s.nama||s.username)+'</span><span class="text-gray-500">('+s.role+')</span><button onclick="doLogout()" class="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold">Logout</button>'; } if(s.role!=='admin'){ showAksesDitolak(s.role); } else { renderUserTable(); refreshStorage(); } }
