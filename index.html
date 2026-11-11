@@ -1,21 +1,6 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<script>
-// [LOCK] WAJIB D1: LocalStorage HANYA untuk Gemini API Key. Selebihnya WAJIB D1.
-(function(){
-  var ALLOWED = ['PANDAWA_API_KEYS_V14','PANDAWA_API_KEY_1','PANDAWA_API_KEY_2','PANDAWA_API_KEY_3','PANDAWA_KEYS_STD_V14','PANDAWA_API_KEYS_COUNT','pandawa_gemini_key'];
-  try{
-    var _get = Storage.prototype.getItem;
-    var _set = Storage.prototype.setItem;
-    var _rem = Storage.prototype.removeItem;
-    Storage.prototype.getItem = function(k){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return null; return _get.call(this, k); };
-    Storage.prototype.setItem = function(k, v){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return; return _set.call(this, k, v); };
-    Storage.prototype.removeItem = function(k){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return; return _rem.call(this, k); };
-  }catch(e){}
-})();
-</script>
-
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PANDAWA OCR - Ekstraktor Nota & Tabel Otomatis</title>
@@ -326,7 +311,7 @@ window.addEventListener('DOMContentLoaded', function(){
                     <i data-lucide="archive" class="w-4 h-4"></i> Arsip Nota
                 </a><a id="linkKelolaUser" href="kelola-user.html" onclick="return pergiKeKelolaUser(event)" class="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-amber-500/30 hover:border-amber-400 text-amber-300 text-xs font-semibold rounded-lg transition-all shadow-sm"><i data-lucide="users" class="w-4 h-4"></i> Kelola User</a><span id="userInfoBar" class="hidden sm:flex items-center gap-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs text-gray-300"></span>
                 <button id="btnSetApiKey" onclick="bukaModalApiKey()" class="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-amber-500/30 hover:border-amber-400 text-amber-300 text-xs font-semibold rounded-lg transition-all shadow-sm">
-                    <i data-lucide="key" class="w-4 h-4"></i> Set Gemini API Key
+                    <i data-lucide="key" class="w-4 h-4"></i> Setting
                 </button>
             </div>
         </div>
@@ -572,7 +557,7 @@ window.addEventListener('DOMContentLoaded', function(){
             <div class="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] text-amber-200 leading-relaxed">
                 <b>FORMAT STANDART:</b> AIzaSy... / AQ... semua bisa.<br>
                 • <b>1 key tetap bisa ekstrak</b> • <b>2 key tetap bisa</b> • <b>3 key paling cepat</b> (rotasi otomatis).<br>
-                • Key tersimpan di LocalStorage dulu (aplikasi masih pengembangan). Nanti kalau sudah sempurna baru pindah ke D1.
+                • Key tersimpan ke D1 (dipakai server untuk Ekstrak) + LocalStorage (cadangan di browser).
             </div>
             <p class="text-xs text-gray-300">
                 Masukkan Gemini API Key Anda dari <a href="https://aistudio.google.com/" target="_blank" class="text-amber-400 underline font-medium">Google AI Studio</a>:
@@ -1278,7 +1263,7 @@ window.addEventListener('DOMContentLoaded', function(){
             }
             if (!apiKeyStorage) {
                 // LOGIN HANYA dari tombol Set Gemini API Key. Ekstrak TIDAK boleh buka login / modal Key.
-                tampilkanToast('Key belum di-setting. Tekan tombol Set Gemini API Key di atas untuk login Super Admin & setting Key.', 'error');
+                tampilkanToast('Key belum di-setting. Tekan tombol Setting di atas untuk login Super Admin & setting Key.', 'error');
                 return;
             }
 
@@ -3147,15 +3132,14 @@ function doLogin(){ const u=(document.getElementById('loginUser')?.value||'').tr
 function doLogout(){ clearSession(); location.reload(); }
 function keHalamanUtama(){ const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); }
 function pergiKeKelolaUser(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href='kelola-user.html'+(s?sessionHash(s):''); return false; }
-function applyRoleUI(s){ if(!s) return; const bar=document.getElementById('userInfoBar'); if(bar){ bar.innerHTML='<span class="text-amber-300 font-bold">'+(s.nama||s.username)+'</span><span class="text-gray-500">('+s.role+')</span><button onclick="doLogout()" class="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold">Logout</button>'; } if(s.role==='user'){ const btn=document.getElementById('btnSimpanD1'); if(btn){ btn.disabled=true; btn.classList.add('opacity-40','pointer-events-none'); btn.title='Hanya Admin yang bisa Simpan Data'; } const kb=document.getElementById('btnSetApiKey'); if(kb){ kb.disabled=true; kb.classList.add('opacity-40','pointer-events-none'); kb.title='Hanya Admin yang bisa Set Gemini API Key'; } ['btnArsipNotaAtas','btnArsipNota'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display='none'; }); const lk=document.getElementById('linkKelolaUser'); if(lk) lk.style.display='none'; } }
+function applyRoleUI(s){ if(!s) return; const bar=document.getElementById('userInfoBar'); if(bar){ bar.innerHTML='<span class="text-amber-300 font-bold">'+(s.nama||s.username)+'</span><span class="text-gray-500">('+s.role+')</span><button onclick="doLogout()" class="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold">Logout</button>'; } if(s.role==='user'){ const btn=document.getElementById('btnSimpanD1'); if(btn){ btn.disabled=true; btn.classList.add('opacity-40','pointer-events-none'); btn.title='Hanya Admin yang bisa Simpan Data'; } const kb=document.getElementById('btnSetApiKey'); if(kb){ kb.disabled=true; kb.classList.add('opacity-40','pointer-events-none'); kb.title='Hanya Admin yang bisa Setting'; } ['btnArsipNotaAtas','btnArsipNota'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display='none'; }); const lk=document.getElementById('linkKelolaUser'); if(lk) lk.style.display='none'; } }
 window.addEventListener('DOMContentLoaded', ()=>{ const s=getSession(); if(!s){ showLoginOverlay(); } else { hideLoginOverlay(); applyRoleUI(s); } });
 document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getElementById('loginOverlay') && document.getElementById('loginOverlay').style.display!=='none' && (e.target.id==='loginPass'||e.target.id==='loginUser')) doLogin(); });
 (function(){ window.pergiKeArsip=function(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href=fileSaudara('arsip')+(s?sessionHash(s):''); return false; }; })();
 </script>
-<!-- [LOCK] OVERRIDE FINAL - definisi di akhir menang atas definisi lama/proxy. Jangan dihapus. -->
+<!-- [LOCK] OVERRIDE FINAL -->
 <script>
 
-// [LOCK] getSession/setSession -> sessionStorage
 window.getSession = function(){
   try{
     const h=window.location.hash||'';
@@ -3258,6 +3242,37 @@ window.simpanDataKeD1 = async function(){
   }catch(e){ tampilkanToast('Gagal simpan ke D1: ' + String(e.message||e) + ' — Cek koneksi / Functions. Data TIDAK disimpan ke LocalStorage (Wajib D1).','error'); }
   finally{ if(btn){ btn.disabled=false; btn.innerHTML='<i data-lucide="save" class="w-4 h-4"></i> Simpan Data ke D1'; try{ lucide.createIcons(); }catch{} } }
 };
+
+// [LOCK] Override simpanApiKeyV14: simpan ke LocalStorage (lama) + JUGA ke D1 /api/settings (proxy baca dari D1).
+(function(){
+  const _origSimpan = window.simpanApiKeyV14;
+  window.simpanApiKeyV14 = async function(){
+    const k1 = (document.getElementById('inputApiKey')?.value||'').trim();
+    const k2 = (document.getElementById('proK2_static')?.value||'').trim();
+    const k3 = (document.getElementById('proK3_static')?.value||'').trim();
+    const keys = [k1, k2, k3].filter(x=>x);
+    let d1Ok = false, d1Msg = '';
+    if(keys.length){
+      try{
+        const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+        const headers = { 'Content-Type':'application/json' };
+        if(token) headers['Authorization'] = 'Bearer ' + token;
+        const res = await fetch('/api/settings', { method:'POST', headers, body: JSON.stringify({ keys }) });
+        const text = await res.text();
+        let j = {};
+        try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+        if(res.ok && j.ok !== false){ d1Ok = true; }
+        else { d1Msg = j.error || j.message || ('HTTP ' + res.status); }
+      }catch(e){ d1Msg = String(e.message||e); }
+    }
+    try{ if(typeof _origSimpan === 'function') _origSimpan(); }catch(e){ console.warn('simpanApiKeyV14 lama gagal:', e); }
+    if(d1Ok){
+      if(typeof tampilkanToast==='function') tampilkanToast('✅ Key tersimpan ke D1 ('+keys.length+' key). Ekstrak Data bisa jalan.','success');
+    } else {
+      if(typeof tampilkanToast==='function') tampilkanToast('⚠️ Key tersimpan di browser saja, GAGAL simpan ke D1: '+d1Msg+'. Set key via Kelola User > Setting (harus Admin).','error');
+    }
+  };
+})();
 </script>
 
 </body>

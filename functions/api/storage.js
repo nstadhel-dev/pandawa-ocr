@@ -1,14 +1,12 @@
 // PANDAWA OCR - Storage D1: Backup semua tabel, Stats, Restore, Hapus isi tabel (Admin saja)
 import { jsonResp, handleOptions, cleanStr, ensureTables, requireAdmin, requireAuth } from '../_lib.js';
 export async function onRequestOptions({ request }){ return handleOptions(request); }
-const LIMIT_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB (D1 Free)
-function fmtBytes(b){ if(!b && b!==0) return '-'; if(b<1024) return b+' B'; if(b<1024*1024) return (b/1024).toFixed(1)+' KB'; if(b<1024*1024*1024) return (b/1024/1024).toFixed(2)+' MB'; return (b/1024/1024/1024).toFixed(2)+' GB'; }
+const LIMIT_BYTES = 5 * 1024 * 1024 * 1024;
 export async function onRequestGet({ request, env }){
   try{
     await ensureTables(env.DB);
     const url = new URL(request.url);
     const action = url.searchParams.get('action') || 'stats';
-    // BACKUP: semua tabel + isinya (Admin saja)
     if(action === 'backup'){
       const a = await requireAdmin(env.DB, request);
       if(a.error) return jsonResp({ ok:false, error:a.error }, a.status, request);
@@ -20,7 +18,6 @@ export async function onRequestGet({ request, env }){
         counts:{ nota: nota.results.length, gabungan: gabungan.results.length, users: users.results.length, settings: settings.results.length },
         tables:{ nota: nota.results, gabungan: gabungan.results, users: users.results, settings: settings.results } }, 200, request);
     }
-    // STATS: terpakai, sisa, per-tabel, file besar/kecil (butuh login)
     const a2 = await requireAuth(env.DB, request);
     if(a2.error) return jsonResp({ ok:false, error:a2.error }, a2.status, request);
     const notaStat = await env.DB.prepare(`SELECT COUNT(*) as c, COALESCE(SUM(LENGTH(data)),0) as bytes, COALESCE(SUM(LENGTH(no_nota)+LENGTH(tanggal)+LENGTH(nama_kapal)+LENGTH(feature_type)),0) as meta FROM nota`).first();
@@ -59,7 +56,6 @@ export async function onRequestPost({ request, env }){
     if(b.type !== 'PANDAWA_D1_BACKUP' || !b.tables || typeof b.tables !== 'object') return jsonResp({ ok:false, error:'File bukan backup PANDAWA D1 (type tidak cocok)' }, 400, request);
     const t = b.tables;
     const stmts = [];
-    // Nota (exact restore: hapus dulu, lalu isi dari backup)
     if(Array.isArray(t.nota)){
       stmts.push(env.DB.prepare(`DELETE FROM nota`));
       for(const r of t.nota.slice(0, 2000)){
@@ -67,14 +63,12 @@ export async function onRequestPost({ request, env }){
           cleanStr(r.id||'',100), cleanStr(r.no_nota||'',100), cleanStr(r.tanggal||'',20), cleanStr(r.nama_kapal||'',100), cleanStr(r.feature_type||'STANDART',50), String(r.data||''), Number(r.created_at)||Date.now()));
       }
     }
-    // Gabungan
     if(Array.isArray(t.gabungan)){
       stmts.push(env.DB.prepare(`DELETE FROM gabungan`));
       for(const r of t.gabungan.slice(0, 1000)){
         stmts.push(env.DB.prepare(`INSERT OR REPLACE INTO gabungan (id, data, created_at) VALUES (?, ?, ?)`).bind(cleanStr(r.id||'',100), String(r.data||''), Number(r.created_at)||Date.now()));
       }
     }
-    // Users (full, termasuk password_hash & salt agar bisa login lagi)
     if(Array.isArray(t.users)){
       stmts.push(env.DB.prepare(`DELETE FROM users`));
       for(const r of t.users.slice(0, 500)){
@@ -82,7 +76,6 @@ export async function onRequestPost({ request, env }){
           cleanStr(r.username||'',30), String(r.password_hash||''), String(r.salt||''), cleanStr(r.role||'user',10), cleanStr(r.nama||'',100), Number(r.created_at)||Date.now()));
       }
     }
-    // Settings
     if(Array.isArray(t.settings)){
       stmts.push(env.DB.prepare(`DELETE FROM settings`));
       for(const r of t.settings.slice(0, 500)){
@@ -90,9 +83,7 @@ export async function onRequestPost({ request, env }){
       }
     }
     if(!stmts.length) return jsonResp({ ok:false, error:'Backup kosong, tidak ada tabel yang direstore' }, 400, request);
-    // Batch (atomic). D1 batch max ~1000 stmt, jadi potong per 500.
     for(let i=0;i<stmts.length;i+=500){ await env.DB.batch(stmts.slice(i, i+500)); }
-    // Logout semua sesi setelah restore (paksa login ulang dengan data baru)
     await env.DB.prepare(`DELETE FROM sessions`).run();
     return jsonResp({ ok:true, restored:{ nota: Array.isArray(t.nota)?t.nota.length:0, gabungan: Array.isArray(t.gabungan)?t.gabungan.length:0, users: Array.isArray(t.users)?t.users.length:0, settings: Array.isArray(t.settings)?t.settings.length:0 } }, 200, request);
   }catch(e){ return jsonResp({ ok:false, error:String(e) }, 500, request); }

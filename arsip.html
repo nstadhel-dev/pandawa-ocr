@@ -1,21 +1,6 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<script>
-// [LOCK] WAJIB D1: LocalStorage HANYA untuk Gemini API Key. Selebihnya WAJIB D1.
-(function(){
-  var ALLOWED = ['PANDAWA_API_KEYS_V14','PANDAWA_API_KEY_1','PANDAWA_API_KEY_2','PANDAWA_API_KEY_3','PANDAWA_KEYS_STD_V14','PANDAWA_API_KEYS_COUNT','pandawa_gemini_key'];
-  try{
-    var _get = Storage.prototype.getItem;
-    var _set = Storage.prototype.setItem;
-    var _rem = Storage.prototype.removeItem;
-    Storage.prototype.getItem = function(k){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return null; return _get.call(this, k); };
-    Storage.prototype.setItem = function(k, v){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return; return _set.call(this, k, v); };
-    Storage.prototype.removeItem = function(k){ if(this === window.localStorage && ALLOWED.indexOf(k) < 0) return; return _rem.call(this, k); };
-  }catch(e){}
-})();
-</script>
-
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Arsip Nota - PANDAWA OCR</title>
@@ -1272,10 +1257,9 @@ document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getEl
   </div>
 </div>
 
-<!-- [LOCK] OVERRIDE FINAL - definisi di akhir menang atas definisi lama/proxy. Jangan dihapus. -->
+<!-- [LOCK] OVERRIDE FINAL -->
 <script>
 
-// [LOCK] getSession/setSession -> sessionStorage
 window.getSession = function(){
   try{
     const h=window.location.hash||'';
@@ -1337,13 +1321,10 @@ window.showMsgbox = function(title, message, confirmText){
     const btnOk=document.getElementById('msgboxConfirm');
     const btnCancel=document.getElementById('msgboxCancel');
     if(!ov || !t || !m || !btnOk || !btnCancel){ resolve(confirm(message)); return; }
-    t.textContent=title||'Hapus?';
-    m.textContent=message||'Yakin hapus?';
-    btnOk.textContent=confirmText||'Ya, Hapus';
+    t.textContent=title||'Hapus?'; m.textContent=message||'Yakin hapus?'; btnOk.textContent=confirmText||'Ya, Hapus';
     ov.style.display='flex';
     const cleanup=(val)=>{ ov.style.display='none'; btnOk.onclick=null; btnCancel.onclick=null; ov.onclick=null; resolve(val); };
-    btnOk.onclick=()=>cleanup(true);
-    btnCancel.onclick=()=>cleanup(false);
+    btnOk.onclick=()=>cleanup(true); btnCancel.onclick=()=>cleanup(false);
     ov.onclick=(e)=>{ if(e.target===ov) cleanup(false); };
   });
 };
@@ -1358,7 +1339,7 @@ window.loadArsip = async function(){
       const j=await res.json();
       const arr=Array.isArray(j.data)?j.data:(Array.isArray(j)?j:[]);
       if(j.ok!==false && arr.length>=0){
-        const d1=arr.map(x=>{
+        allData=arr.map(x=>{
           let o={...x, _sumber:'D1'};
           if(typeof x.data==='string'){ try{ const dd=JSON.parse(x.data); o={...o, ...dd}; }catch{} }
           if(!o.items && Array.isArray(x.items)) o.items=x.items;
@@ -1366,10 +1347,8 @@ window.loadArsip = async function(){
             const first=(o.items||[])[0]; const n=first && first.rowVals ? first.rowVals.length : (Array.isArray(first)?first.length:0);
             o.headers=Array.from({length:n},(_,i)=>'Kolom '+(i+1));
           }
-          o.id=String(o.id??'');
-          return o;
+          o.id=String(o.id??''); return o;
         });
-        allData=[...d1];
       }
     } else if(res.status===401){
       if(typeof tampilkanToast==='function') tampilkanToast('Sesi habis (401). Logout lalu login lagi untuk lihat arsip D1.','error');
