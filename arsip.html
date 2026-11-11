@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
 <script>
-// WAJIB D1: LocalStorage HANYA untuk Gemini API Key (biar tanpa proxy). Selebihnya WAJIB D1. [LOCK]
+// [LOCK] WAJIB D1: LocalStorage HANYA untuk Gemini API Key (biar tanpa proxy). Selebihnya WAJIB D1.
 (function(){
   var ALLOWED = ['PANDAWA_API_KEYS_V14','PANDAWA_API_KEY_1','PANDAWA_API_KEY_2','PANDAWA_API_KEY_3','PANDAWA_KEYS_STD_V14','PANDAWA_API_KEYS_COUNT','pandawa_gemini_key'];
   try{
@@ -1163,14 +1163,13 @@ function getSession(){
   return null;
 }
 function setSession(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
-function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
+function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} }
 function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
 function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
 function showLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
 function hideLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='none'; }
 function showAksesDitolak(role){ const o=document.getElementById('aksesDitolakOverlay'); const t=document.getElementById('aksesRoleTxt'); if(t) t.textContent=role||'-'; if(o) o.style.display='flex'; }
 async function doLogin(){
-  // [LOCK] Login WAJIB lewat D1 /api/auth.
   const u=(document.getElementById('loginUser')?.value||'').trim();
   const p=(document.getElementById('loginPass')?.value||'');
   const errEl=document.getElementById('loginError');
