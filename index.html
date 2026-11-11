@@ -85,7 +85,7 @@
 </head>
 <script>
 // SETTING KEY DI DATABASE SAJA: hapus jejak Key lama di LocalStorage saat load, agar Key tidak bisa dicuri dari browser.
-/* PENGEMBANGAN: Key disimpan di D1 (Wajib) - JANGAN hapus Key saat load */
+/* PENGEMBANGAN: Key disimpan di LocalStorage dulu - JANGAN hapus Key saat load */
 </script>
 <body class="min-h-screen pb-12">
 <!-- PANDAWA SECURITY + D1 BRIDGE (Deploy) - BUKAN worker.js, ini script di HTML -->
@@ -475,7 +475,7 @@
             <div class="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] text-amber-200 leading-relaxed">
                 <b>FORMAT STANDART:</b> AIzaSy... / AQ... semua bisa.<br>
                 • <b>1 key tetap bisa ekstrak</b> • <b>2 key tetap bisa</b> • <b>3 key paling cepat</b> (rotasi otomatis).<br>
-                • Key tersimpan di D1 (Wajib) (aplikasi masih pengembangan). Nanti kalau sudah sempurna baru pindah ke D1.
+                • Key tersimpan di LocalStorage dulu (aplikasi masih pengembangan). Nanti kalau sudah sempurna baru pindah ke D1.
             </div>
             <p class="text-xs text-gray-300">
                 Masukkan Gemini API Key Anda dari <a href="https://aistudio.google.com/" target="_blank" class="text-amber-400 underline font-medium">Google AI Studio</a>:
@@ -1762,7 +1762,7 @@
 
         // FUNGSI UNTUK MENYIMPAN DATA - FINAL LOCKED: LOCALSTORAGE DULU (WAJIB BERHASIL), D1 BELAKANGAN (BOLEH GAGAL, MASUK ANTRIAN)
         // Alasan perbaikan: dulu fungsi ini langsung fetch('/api/upload'), kalau file dibuka langsung (file:// / preview) fetch gagal -> 'Failed to fetch' -> data tidak tersimpan sama sekali.
-        // Sekarang: 1) Simpan ke D1 (Wajib) (PANDAWA_ARCHIVE_V14, thumbnail kecil, tidak quota), 2) Baru coba D1, kalau D1 gagal -> antrian, bukan error.
+        // Sekarang: 1) Simpan ke LocalStorage dulu (PANDAWA_ARCHIVE_V14, thumbnail kecil, tidak quota), 2) Baru coba D1, kalau D1 gagal -> antrian, bukan error.
         async function simpanDataKeD1() {
             if (masterDataRows.length === 0 && !currentBase64Image) { tampilkanToast('Tidak ada data untuk disimpan!', 'error'); return; }
             const btnSimpan = document.getElementById('btnSimpanD1');
@@ -1927,7 +1927,7 @@ async function tampilkanNotaDariArsip(nota){
                 }
               }
             }catch(e){ console.warn('Decode hash load gagal', e); }
-            // 1) Coba D1 (Wajib) - ini yang PASTI jalan (Arsip sudah simpan nota lengkap)
+            // 1) Coba LocalStorage dulu - ini yang PASTI jalan (Arsip sudah simpan nota lengkap)
             try{
               const raw = localStorage.getItem('PANDAWA_LOAD_NOTA_V14');
               if(raw){
@@ -2603,37 +2603,33 @@ async function tampilkanNotaDariArsip(nota){
   // Penyebab gagal kemarin: 1) endpoint /api/upload tidak ada di Cloudflare Pages statis
   // 2) payload terlalu besar karena image_base64 full
   // 3) tidak ada fallback jika D1 offline
-  // Solusi V6: kirim image terkompres (max 500KB), coba 3 endpoint, selalu simpan D1 (Wajib), antrian auto-retry
+  // Solusi V6: kirim image terkompres (max 500KB), coba 3 endpoint, selalu simpan LocalStorage dulu, antrian auto-retry
   window.simpanDataKeD1=async function(){
-    // [LOCK] WAJIB D1. LocalStorage HANYA untuk Gemini Key. Data (nota + foto) WAJIB ke D1.
     if(masterDataRows.length===0 && !currentBase64Image){ tampilkanToast('Tidak ada data untuk disimpan!','error'); return; }
-    // Kompres foto agar muat di D1 (backend limit 500.000 karakter). Target < 300.000 karakter.
+
+    // Kompres image untuk D1 agar tidak gagal 413 / D1 TEXT limit
     let imgForD1 = currentBase64Image||'';
-    if(imgForD1){
+    if(imgForD1 && imgForD1.length>400000){
+      // Ambil versi lebih kecil: potong agar tetap valid JPEG preview, tapi arsip di LS tetap full
+      // Kita kirim thumbnail: resize via canvas jika perlu, fallback potong
       try{
         const im=new Image();
         imgForD1 = await new Promise((res)=>{
           im.onload=()=>{
-            // Coba 700px JPEG 0.5 dulu, kalau masih >300k, turun ke 500px JPEG 0.4
-            const tryCompress=(maxW, quality)=>{
-              let w=im.width, h=im.height;
-              if(w>maxW||h>maxW){ if(w>h){ h=Math.round(h*maxW/w); w=maxW; } else { w=Math.round(w*maxW/h); h=maxW; } }
-              const c=document.createElement('canvas'); c.width=w; c.height=h;
-              c.getContext('2d').drawImage(im,0,0,w,h);
-              return c.toDataURL('image/jpeg', quality);
-            };
-            let out = tryCompress(700, 0.5);
-            if(out.length > 300000) out = tryCompress(500, 0.4);
-            if(out.length > 300000) out = tryCompress(400, 0.35);
-            res(out);
+            const MAX=800; let w=im.width, h=im.height;
+            if(w>MAX||h>MAX){ if(w>h){ h=Math.round(h*MAX/w); w=MAX; } else { w=Math.round(w*MAX/h); h=MAX; } }
+            const c=document.createElement('canvas'); c.width=w; c.height=h;
+            c.getContext('2d').drawImage(im,0,0,w,h);
+            res(c.toDataURL('image/jpeg',0.6));
           };
-          im.onerror=()=>res(currentBase64Image.slice(0,300000));
+          im.onerror=()=>res(currentBase64Image.slice(0,400000));
           im.src=currentBase64Image;
         });
-      }catch{ imgForD1 = currentBase64Image.slice(0,300000); }
+      }catch{ imgForD1 = currentBase64Image.slice(0,400000); }
     }
+
     const payload={
-      id: String(Date.now()),
+      id: Date.now(),
       feature_type: currentFormatNota,
       no_nota: document.getElementById('metaNota').value||'',
       tanggal: document.getElementById('metaTanggal').value||'',
@@ -2646,32 +2642,53 @@ async function tampilkanNotaDariArsip(nota){
       resiko1: window.resiko1Val||0,
       resiko2: window.resiko2Val||0
     };
-    const btn=document.getElementById('btnSimpanD1');
-    if(btn){ btn.disabled=true; btn.innerHTML='<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Simpan ke D1...'; try{ lucide.createIcons(); }catch{} }
+
+    // 1. SIMPAN LOCALSTORAGE DULU - V10: PAKAI THUMBNAIL KECIL, BUKAN FOTO FULL
     try{
-      const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
-      const headers = { 'Content-Type':'application/json' };
-      if(token) headers['Authorization'] = 'Bearer ' + token;
-      const res = await fetch('/api/nota', { method:'POST', headers: headers, body: JSON.stringify(payload) });
-      const text = await res.text();
-      let j = {};
-      try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
-      if(!res.ok || j.ok === false){
-        let msg = j.error || j.message || ('HTTP ' + res.status);
-        if(res.status===405 || (text && text.indexOf('<!DOCTYPE')>=0)) msg = 'Functions belum ter-deploy (/api/nota dibalas HTML). Pakai Git, bukan Direct Upload.';
-        else if(res.status===401) msg = 'Sesi habis (401). Logout lalu login lagi.';
-        else if(res.status===404) msg = 'API /api/nota tidak ditemukan (404). Functions belum ter-deploy.';
-        tampilkanToast('Gagal simpan ke D1: ' + msg + ' — Data TIDAK disimpan ke LocalStorage (Wajib D1).','error');
-        return;
-      }
-      tampilkanToast('Tersimpan di D1! No Nota: ' + (payload.no_nota||'-'),'success');
-      try{ masterDataRows=[]; if(typeof renderTabel==='function') renderTabel(); if(typeof updateTotal==='function') updateTotal(); }catch{}
+      let archive=getArchive();
+      const idx=archive.findIndex(a=>a.no_nota===payload.no_nota && a.feature_type===payload.feature_type && payload.no_nota!=='');
+      // Thumbnail 400px untuk arsip (hemat ~15KB, bukan 100-300KB)
+      const thumb = await makeThumbnail(currentBase64Image||'', 400, 0.5);
+      const archivePayload={...payload, image_base64: thumb, image_url: thumb};
+      if(idx>-1){ archive[idx]=archivePayload; } else { archive.unshift(archivePayload); }
+      archive=sortByTanggalNota(archive); if(archive.length>100) archive=archive.slice(0,100);
+      const ok=setArchive(archive);
+      savePro();
+      if(ok) tampilkanToast(`Tersimpan di LocalStorage! Tanggal Nota: ${formatTanggalNotaForDisplay(payload.tanggal)} • Total arsip: ${archive.length} nota`,'success');
+      else tampilkanToast('LocalStorage penuh, auto-cleanup dilakukan. Data tetap dikirim ke D1.','error');
     }catch(e){
-      tampilkanToast('Gagal simpan ke D1: ' + String(e.message||e) + ' — Cek koneksi / Functions. Data TIDAK disimpan ke LocalStorage (Wajib D1).','error');
-    }finally{
-      if(btn){ btn.disabled=false; btn.innerHTML='<i data-lucide="save" class="w-4 h-4"></i> Simpan Data ke D1'; try{ lucide.createIcons(); }catch{} }
+      tampilkanToast('Gagal simpan LocalStorage: '+e.message+' — tapi tetap coba kirim ke D1','error');
+      // JANGAN return - tetap lanjut ke D1, jangan batalkan simpan
     }
-};
+
+    // 2. SYNC KE D1 - COBA 3 ENDPOINT
+    const btn=document.getElementById('btnSimpanD1');
+    if(btn){ btn.disabled=true; const old=btn.innerHTML; btn.innerHTML=`<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Sync ke D1...`; lucide.createIcons();
+      let d1Success=false; let lastErr='';
+      const endpoints=['/api/upload','/api/nota','/api/save'];
+      for(const ep of endpoints){
+        try{
+          const res=await fetch(ep,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+          const text=await res.text();
+          let json={}; try{ json=JSON.parse(text); }catch{ json={raw:text}; }
+          if(res.ok && (json.success!==false)){
+            d1Success=true; break;
+          } else { lastErr = json.error||json.message||('HTTP '+res.status+' '+text.slice(0,100)); }
+        }catch(e){ lastErr=e.message; }
+      }
+      if(d1Success){
+        tampilkanToast('Sync ke D1 BERHASIL! + LocalStorage OK','success');
+        // Bersihkan antrian yang sama no_nota
+        try{ let q=JSON.parse(localStorage.getItem(LS_QUEUE)||'[]'); q=q.filter(x=>x.payload?.no_nota!==payload.no_nota); localStorage.setItem(LS_QUEUE, JSON.stringify(q)); }catch{}
+      } else {
+        tampilkanToast('Functions belum ter-deploy (/api/nota dibalas HTML). Pakai Git, bukan Direct Upload.'+lastErr,'error');
+        try{ const q=JSON.parse(localStorage.getItem(LS_QUEUE)||'[]'); q.push({payload, time:Date.now()}); localStorage.setItem(LS_QUEUE, JSON.stringify(q)); }catch{}
+        // Tampilkan cara perbaiki
+        console.warn('D1 FIX: Deploy worker.js ke Cloudflare Workers dan binding D1. Lihat file worker.js');
+      }
+      btn.disabled=false; btn.innerHTML=old; lucide.createIcons();
+    }
+  };
 
   // Auto retry queue saat online
   async function retryQueue(){
@@ -2680,7 +2697,7 @@ async function tampilkanNotaDariArsip(nota){
       if(!q.length) return;
       for(const item of q){
         try{
-          const res=await fetch('/api/nota',{method:'POST', headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+(sessionStorage.getItem('PANDAWA_TOKEN')||'')}, body:JSON.stringify(item.payload)});
+          const res=await fetch('/api/upload',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(item.payload)});
           if(res.ok){ const nj=JSON.parse(localStorage.getItem(LS_QUEUE)||'[]').filter(x=>x.time!==item.time); localStorage.setItem(LS_QUEUE, JSON.stringify(nj)); }
         }catch{}
       }
@@ -2826,7 +2843,7 @@ console.log('FINAL LOCKED SUPER CEPAT AKTIF: maxTokens 2048, timeout 12s, model 
     window.__muatKeyDariDB().then(()=>{ if(typeof _origBukaModalApiKey==='function') _origBukaModalApiKey(); });
   };
   window.__muatKeyDariDB = async function(){
-    // PENGEMBANGAN: baca Key dari D1 (Wajib) (sumber utama). D1 hanya pelengkap kalau online.
+    // PENGEMBANGAN: baca Key dari LocalStorage dulu (sumber utama). D1 hanya pelengkap kalau online.
     try{
       let dariLocal=null;
       try{ dariLocal=JSON.parse(localStorage.getItem('PANDAWA_KEYS_STD_V14')||'null'); }catch{}
@@ -2863,7 +2880,7 @@ console.log('FINAL LOCKED SUPER CEPAT AKTIF: maxTokens 2048, timeout 12s, model 
   // Kalau sudah ada admin, server tolak (409) -> user diarahkan Login. Ini satu-satunya pintu Daftar, hanya muncul dari tombol Set Key.
   window.daftarSuperAdmin = async function(){ /* LOGIN DIMATIKAN - tidak ada daftar */ };
   // Simpan Key ke Database saja: override simpanApiKey lama agar TIDAK tulis LocalStorage
-  // PENGEMBANGAN: simpan Key di D1 (Wajib) (wajib sukses). D1 dicoba di belakang, kalau D1 gagal (file:// / belum online) TIDAK boleh bikin Simpan gagal.
+  // PENGEMBANGAN: simpan Key di LocalStorage dulu (wajib sukses). D1 dicoba di belakang, kalau D1 gagal (file:// / belum online) TIDAK boleh bikin Simpan gagal.
   window.__simpanKeyKeDB = async function(keys){
     try{
       localStorage.setItem('PANDAWA_KEYS_STD_V14', JSON.stringify(keys));
@@ -2919,14 +2936,14 @@ console.log('FINAL LOCKED SUPER CEPAT AKTIF: maxTokens 2048, timeout 12s, model 
 </script>
 
 <script>
-/* FINAL GUARD - LOCK: PENGEMBANGAN - Set Key simpan di D1 (Wajib), D1 nanti kalau sudah sempurna. Script ini HARUS paling akhir agar tidak ditimpa kode lama.
+/* FINAL GUARD - LOCK: PENGEMBANGAN - Set Key simpan di LocalStorage dulu, D1 nanti kalau sudah sempurna. Script ini HARUS paling akhir agar tidak ditimpa kode lama.
    Kenapa perlu: tombol Simpan di modal memanggil simpanApiKeyV14() (bukan simpanApiKey), dan kode lama V13/V14 menulis Key ke LocalStorage.
    Guard ini menimpa ketiganya + memblokir localStorage.setItem untuk Key. */
 (function(){
   var KEY_RE = /PANDAWA.*KEY|PANDAWA_KEYS|API_KEY|pandawa_gemini_key/i;
   var _origSetItem = Storage.prototype.setItem;
   Storage.prototype.setItem = function(k, v){
-    // PENGEMBANGAN: Key disimpan di D1 (Wajib) - tidak diblokir lagi. Nanti kalau sudah sempurna pindah ke D1.
+    // PENGEMBANGAN: Key disimpan di LocalStorage dulu - tidak diblokir lagi. Nanti kalau sudah sempurna pindah ke D1.
     return _origSetItem.call(this, k, v);
   };
   // Hapus jejak Key lama di LocalStorage saat load

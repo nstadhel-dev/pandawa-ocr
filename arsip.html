@@ -139,7 +139,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#0b0f17;color:#f3f4f6
 <div class="md:col-span-2">
 <label class="text-[10px] font-bold text-amber-400 uppercase tracking-wider">Sumber Data</label>
 <select id="filterSumber" onchange="applyFilter()" class="w-full mt-1 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm input-gold">
-<option value="SEMUA" selected>Semua (Local + D1)</option>
+<option value="SEMUA" selected>D1 (Wajib)</option>
 <option value="LOCAL">LocalStorage Saja</option>
 <option value="D1">D1 Saja</option>
 </select>
@@ -176,7 +176,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#0b0f17;color:#f3f4f6
 <tbody id="tbodyArsip" class="divide-y divide-gray-800/60 text-sm"></tbody>
 </table>
 </div>
-<div id="emptyArsip" class="hidden py-16 text-center"><i data-lucide="archive" class="w-10 h-10 mx-auto text-gray-700 mb-3"></i><p class="text-sm text-gray-500">Belum ada arsip. Simpan dari halaman OCR dulu.</p><p class="text-[11px] text-gray-600 mt-1">Data tersimpan di LocalStorage key: PANDAWA_ARCHIVE_V14</p></div>
+<div id="emptyArsip" class="hidden py-16 text-center"><i data-lucide="archive" class="w-10 h-10 mx-auto text-gray-700 mb-3"></i><p class="text-sm text-gray-500">Belum ada arsip. Simpan dari halaman OCR dulu.</p><p class="text-[11px] text-gray-600 mt-1">Data tersimpan di D1 (Wajib)</p></div>
 <!-- PAGINATION 20 DATA -->
 <div class="flex items-center justify-between px-4 py-3 border-t border-gray-800 text-xs text-gray-400">
 <span id="infoPagination">Menampilkan 0 dari 0 data</span>
@@ -270,37 +270,35 @@ function formatFitur(f){
   return '<span class="badge bg-gray-800 text-gray-300">'+f+'</span>';
 }
 async function loadArsip(){
-  const local=getLocalArchive().map(x=>({...x, _sumber:'LOCAL'}));
-  allData=[...local];
-  // PENGEMBANGAN: LocalStorage adalah sumber utama. D1 hanya pelengkap kalau online, gagal D1 tidak boleh bikin Arsip kosong.
-  // Sebelumnya fetch /api/list + cek j.success -> D1 tidak pernah kebaca, jadi data baru tidak muncul.
+  // [LOCK] WAJIB D1. LocalStorage HANYA untuk Gemini Key. Arsip baca dari D1 (dengan token).
+  allData=[];
   try{
-    const res=await fetch('/api/nota');
-    if(res.ok){ const j=await res.json(); const arr=Array.isArray(j.data)?j.data:(Array.isArray(j)?j:[]);
+    const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+    const headers = {};
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+    const res=await fetch('/api/nota', { headers });
+    if(res.ok){
+      const j=await res.json();
+      const arr=Array.isArray(j.data)?j.data:(Array.isArray(j)?j:[]);
       if(j.ok!==false && arr.length>=0){
         const d1=arr.map(x=>{
           let o={...x, _sumber:'D1'};
-          // Backend D1 kadang kirim data sebagai string JSON {items, headers} -> parse dulu
           if(typeof x.data==='string'){ try{ const dd=JSON.parse(x.data); o={...o, ...dd}; }catch{} }
           if(!o.items && Array.isArray(x.items)) o.items=x.items;
-          // OTOMATIS: headers harus ikut, kalau tidak ada buat dari baris pertama
           if(o.feature_type==='OTOMATIS' && (!o.headers || !o.headers.length)){
             const first=(o.items||[])[0]; const n=first && first.rowVals ? first.rowVals.length : (Array.isArray(first)?first.length:0);
             o.headers=Array.from({length:n},(_,i)=>'Kolom '+(i+1));
           }
-          // Normalisasi id ke string agar hapus bisa cocok (D1 id string, Local id number)
           o.id=String(o.id??'');
           return o;
         });
-        // Gabung: D1 menang jika id sama (data terbaru), Local yang belum di D1 tetap tampil
-        d1.forEach(d=>{
-          const idx=allData.findIndex(a=> String(a.id)===String(d.id) && a.no_nota===d.no_nota);
-          if(idx>-1) allData[idx]=d; else if(!allData.some(a=>a.no_nota===d.no_nota && a.feature_type===d.feature_type && a.tanggal===d.tanggal)) allData.push(d);
-        });
+        allData=[...d1];
       }
+    } else if(res.status===401){
+      console.warn('Arsip: Sesi habis (401). Logout lalu login lagi untuk lihat arsip D1.');
+      if(typeof tampilkanToast==='function') tampilkanToast('Sesi habis (401). Logout lalu login lagi untuk lihat arsip D1.','error');
     }
-  }catch(e){ console.warn('D1 offline / file://, pakai LocalStorage saja', e); }
-  // V12: Sort BERDASARKAN TANGGAL NOTA (terbaru dulu), bukan tanggal simpan
+  }catch(e){ console.warn('Gagal load arsip dari D1:', e); }
   allData=sortArsipByTanggal(allData, document.getElementById('sortBy')?.value||'TANGGAL_NOTA_DESC');
   applyFilter();
 }
@@ -1056,7 +1054,6 @@ function muatDetailKeOCR(){ if(!detailNota) return; kirimNotaKeOCR(detailNota); 
   const n=filtered[idx]; if(!n) return;
   const ok = await showMsgbox('Hapus Nota?', 'Hapus nota '+(n.no_nota||'-')+'? Data yang terhapus tidak bisa dikembalikan.', 'Ya, Hapus');
   if(!ok) return;
-  // Hapus dari D1 (dengan token). Sebelumnya tanpa token -> 401 -> data balik lagi.
   try{
     if(n.id){
       const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
@@ -1076,7 +1073,6 @@ function muatDetailKeOCR(){ if(!detailNota) return; kirimNotaKeOCR(detailNota); 
 async function hapusSemuaArsip(){
   const ok = await showMsgbox('Hapus SEMUA Arsip?', 'Hapus SEMUA arsip di D1? Data yang terhapus tidak bisa dikembalikan.', 'Ya, Hapus Semua');
   if(!ok) return;
-  // Hapus SEMUA di D1 (dengan token). Sebelumnya tanpa token -> 401 -> data balik lagi.
   try{
     const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
     const headers = {};
@@ -1153,8 +1149,7 @@ function showMsgbox(title, message, confirmText){
 </script>
 
 <script>
-// FINAL LOCKED - Tombol Kembali ke OCR -> halaman utama aplikasi (index.html)
-function kembaliKeOCR(e){ window.location.href=fileSaudara('index'); if(e) e.preventDefault(); return false; }
+
 </script>
 
 <!-- REV29 - LOGIN + ROLE -->
@@ -1203,7 +1198,7 @@ function getSession(){
   return null;
 }
 function setSession(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
-function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
+function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} }
 function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
 function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
 function showLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
@@ -1246,6 +1241,14 @@ function cekAksesArsip(s){ if(!s) return; const bar=document.getElementById('use
 window.addEventListener('DOMContentLoaded', ()=>{ const s=getSession(); if(!s){ showLoginOverlay(); } else { hideLoginOverlay(); cekAksesArsip(s); } });
 document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getElementById('loginOverlay') && document.getElementById('loginOverlay').style.display!=='none' && (e.target.id==='loginPass'||e.target.id==='loginUser')) doLogin(); });
 (function(){ window.kembaliKeOCR=function(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); return false; }; })();
+</script>
+<script>
+// [LOCK] Kembali ke OCR - tahan banting, tanpa dependensi fileSaudara/getSession/sessionHash.
+window.kembaliKeOCR = function(e){
+  try{ if(e) e.preventDefault(); }catch{}
+  try{ window.location.href = 'index.html'; }catch{ window.location.assign('index.html'); }
+  return false;
+};
 </script>
 
 <!-- MSGBOX Konfirmasi Hapus [LOCK] -->
