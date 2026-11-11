@@ -36,8 +36,8 @@ export async function onRequestPost({ request, env }){
     const nama_kapal = cleanStr(b.nama_kapal, 100);
     const feature_type = ['STANDART','KNC_KNT_KNB','RINCIAN','OTOMATIS','GABUNGAN'].includes(b.feature_type) ? b.feature_type : 'STANDART';
     const items = Array.isArray(b.items) ? b.items.slice(0,500) : [];
-    const img = cleanStr(b.image_base64 || b.image_url || '', 120000);
-    const safe = JSON.stringify({ items, headers: Array.isArray(b.headers) ? b.headers.slice(0,50) : [], resiko1: Number(b.resiko1)||0, resiko2: Number(b.resiko2)||0, image_base64: img, image_url: img }).slice(0, 250000);
+    const img = cleanStr(b.image_base64 || b.image_url || '', 500000);
+    const safe = JSON.stringify({ items, headers: Array.isArray(b.headers) ? b.headers.slice(0,50) : [], resiko1: Number(b.resiko1)||0, resiko2: Number(b.resiko2)||0, image_base64: img, image_url: img }).slice(0, 600000);
     await env.DB.prepare(`INSERT OR REPLACE INTO nota (id, no_nota, tanggal, nama_kapal, feature_type, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(id, no_nota, tanggal, nama_kapal, feature_type, safe, Date.now()).run();
     return jsonResp({ ok:true, id }, 200, request);
   }catch(e){ return jsonResp({ ok:false, error:String(e) }, 500, request); }

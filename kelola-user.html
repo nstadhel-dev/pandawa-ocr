@@ -214,7 +214,7 @@ function getSession(){
   return null;
 }
 function setSession(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
-function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} }
+function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
 function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
 function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
 function fileSaudara(target){ try{ const f=(window.location.pathname.split('/').pop()||''); const m=f.match(/^(.*?)(arsip|index|kelolauser)([-_]REV\d+)?(\.html?)$/i); if(m){ const pref=m[1]||''; const rev=m[3]||''; const ext=m[4]||'.html'; const isCap = target==='index' ? /^Arsip/.test(f) : target==='arsip' ? /^Index/.test(f) : /^Index/.test(f); const nama = isCap ? (target==='index'?'Index':target==='arsip'?'Arsip':'KelolaUser') : target; return pref + nama + rev + ext; } }catch{} return target+'.html'; }
