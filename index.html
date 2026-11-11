@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
 <script>
-// WAJIB D1: LocalStorage HANYA untuk Gemini API Key (biar tanpa proxy). Selebihnya WAJIB D1.
+// WAJIB D1: LocalStorage HANYA untuk Gemini API Key (biar tanpa proxy). Selebihnya WAJIB D1. [LOCK]
 (function(){
   var ALLOWED = ['PANDAWA_API_KEYS_V14','PANDAWA_API_KEY_1','PANDAWA_API_KEY_2','PANDAWA_API_KEY_3','PANDAWA_KEYS_STD_V14','PANDAWA_API_KEYS_COUNT','pandawa_gemini_key'];
   try{
@@ -348,7 +348,7 @@
                         </div>
                     </div>
                     <div class="text-center space-y-1">
-                        <p class="text-sm font-bold text-amber-300 tracking-wider">SEDANG MEMPROSES NOTA...</p>
+                        <p class="text-sm font-bold text-amber-300 tracking-wider">AI SEDANG MEMPROSES NOTA...</p>
                         <p id="preloaderSubtext" class="text-xs text-gray-400">Ekstraksi data presisi kilat...</p>
                     </div>
                 </div>
@@ -1859,12 +1859,12 @@
                 try{ let q=JSON.parse(localStorage.getItem('PANDAWA_QUEUE_V14')||'[]'); q=q.filter(x=>x.payload?.no_nota!==noNotaVal); localStorage.setItem('PANDAWA_QUEUE_V14', JSON.stringify(q)); }catch{}
               } else {
                 // D1 gagal (misal file dibuka langsung, belum deploy worker.js) -> BUKAN error fatal, data sudah aman di LocalStorage + antrian
-                tampilkanToast('ℹ️ D1 belum terjangkau (Failed to fetch / belum deploy worker.js). Data AMAN di LocalStorage + antrian sync.', 'error');
+                tampilkanToast('ℹ️ D1 belum terjangkau (Failed to fetch / belum deploy worker.js). Data TIDAK disimpan ke LocalStorage (Wajib D1) ;
                 try{ const q=JSON.parse(localStorage.getItem('PANDAWA_QUEUE_V14')||'[]'); q.push({payload: payloadD1, time: Date.now()}); localStorage.setItem('PANDAWA_QUEUE_V14', JSON.stringify(q)); }catch{}
               }
             } catch (err) {
               // JANGAN tampilkan 'Error Simpan D1: Failed to fetch' sebagai gagal total - data sudah tersimpan di LocalStorage
-              tampilkanToast('ℹ️ D1 belum terjangkau. Data AMAN di LocalStorage + antrian sync.', 'error');
+              tampilkanToast('ℹ️ D1 belum terjangkau. Data TIDAK disimpan ke LocalStorage (Wajib D1) ;
               try{ const q=JSON.parse(localStorage.getItem('PANDAWA_QUEUE_V14')||'[]'); q.push({payload: payloadLS, time: Date.now()}); localStorage.setItem('PANDAWA_QUEUE_V14', JSON.stringify(q)); }catch{}
             } finally {
               if(btnSimpan){ btnSimpan.disabled = false; btnSimpan.innerHTML = `<i data-lucide="save" class="w-4 h-4"></i> Simpan Data ke D1`; lucide.createIcons(); }
@@ -2605,13 +2605,10 @@ async function tampilkanNotaDariArsip(nota){
   // 3) tidak ada fallback jika D1 offline
   // Solusi V6: kirim image terkompres (max 500KB), coba 3 endpoint, selalu simpan LocalStorage dulu, antrian auto-retry
   window.simpanDataKeD1=async function(){
+    // [LOCK] WAJIB D1. LocalStorage HANYA untuk Gemini Key. Data (nota) WAJIB ke D1, tidak boleh LocalStorage.
     if(masterDataRows.length===0 && !currentBase64Image){ tampilkanToast('Tidak ada data untuk disimpan!','error'); return; }
-
-    // Kompres image untuk D1 agar tidak gagal 413 / D1 TEXT limit
     let imgForD1 = currentBase64Image||'';
     if(imgForD1 && imgForD1.length>400000){
-      // Ambil versi lebih kecil: potong agar tetap valid JPEG preview, tapi arsip di LS tetap full
-      // Kita kirim thumbnail: resize via canvas jika perlu, fallback potong
       try{
         const im=new Image();
         imgForD1 = await new Promise((res)=>{
@@ -2627,9 +2624,8 @@ async function tampilkanNotaDariArsip(nota){
         });
       }catch{ imgForD1 = currentBase64Image.slice(0,400000); }
     }
-
     const payload={
-      id: Date.now(),
+      id: String(Date.now()),
       feature_type: currentFormatNota,
       no_nota: document.getElementById('metaNota').value||'',
       tanggal: document.getElementById('metaTanggal').value||'',
@@ -2642,53 +2638,32 @@ async function tampilkanNotaDariArsip(nota){
       resiko1: window.resiko1Val||0,
       resiko2: window.resiko2Val||0
     };
-
-    // 1. SIMPAN LOCALSTORAGE DULU - V10: PAKAI THUMBNAIL KECIL, BUKAN FOTO FULL
-    try{
-      let archive=getArchive();
-      const idx=archive.findIndex(a=>a.no_nota===payload.no_nota && a.feature_type===payload.feature_type && payload.no_nota!=='');
-      // Thumbnail 400px untuk arsip (hemat ~15KB, bukan 100-300KB)
-      const thumb = await makeThumbnail(currentBase64Image||'', 400, 0.5);
-      const archivePayload={...payload, image_base64: thumb, image_url: thumb};
-      if(idx>-1){ archive[idx]=archivePayload; } else { archive.unshift(archivePayload); }
-      archive=sortByTanggalNota(archive); if(archive.length>100) archive=archive.slice(0,100);
-      const ok=setArchive(archive);
-      savePro();
-      if(ok) tampilkanToast(`Tersimpan di LocalStorage! Tanggal Nota: ${formatTanggalNotaForDisplay(payload.tanggal)} • Total arsip: ${archive.length} nota`,'success');
-      else tampilkanToast('LocalStorage penuh, auto-cleanup dilakukan. Data tetap dikirim ke D1.','error');
-    }catch(e){
-      tampilkanToast('Gagal simpan LocalStorage: '+e.message+' — tapi tetap coba kirim ke D1','error');
-      // JANGAN return - tetap lanjut ke D1, jangan batalkan simpan
-    }
-
-    // 2. SYNC KE D1 - COBA 3 ENDPOINT
     const btn=document.getElementById('btnSimpanD1');
-    if(btn){ btn.disabled=true; const old=btn.innerHTML; btn.innerHTML=`<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Sync ke D1...`; lucide.createIcons();
-      let d1Success=false; let lastErr='';
-      const endpoints=['/api/upload','/api/nota','/api/save'];
-      for(const ep of endpoints){
-        try{
-          const res=await fetch(ep,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-          const text=await res.text();
-          let json={}; try{ json=JSON.parse(text); }catch{ json={raw:text}; }
-          if(res.ok && (json.success!==false)){
-            d1Success=true; break;
-          } else { lastErr = json.error||json.message||('HTTP '+res.status+' '+text.slice(0,100)); }
-        }catch(e){ lastErr=e.message; }
+    if(btn){ btn.disabled=true; btn.innerHTML='<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Simpan ke D1...'; try{ lucide.createIcons(); }catch{} }
+    try{
+      const token = sessionStorage.getItem('PANDAWA_TOKEN') || '';
+      const headers = { 'Content-Type':'application/json' };
+      if(token) headers['Authorization'] = 'Bearer ' + token;
+      const res = await fetch('/api/nota', { method:'POST', headers: headers, body: JSON.stringify(payload) });
+      const text = await res.text();
+      let j = {};
+      try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+      if(!res.ok || j.ok === false){
+        let msg = j.error || j.message || ('HTTP ' + res.status);
+        if(res.status===405 || (text && text.indexOf('<!DOCTYPE')>=0)) msg = 'Functions belum ter-deploy (/api/nota dibalas HTML). Pakai Git, bukan Direct Upload.';
+        else if(res.status===401) msg = 'Sesi habis (401). Logout lalu login lagi.';
+        else if(res.status===404) msg = 'API /api/nota tidak ditemukan (404). Functions belum ter-deploy.';
+        tampilkanToast('Gagal simpan ke D1: ' + msg + ' — Data TIDAK disimpan ke LocalStorage (Wajib D1).','error');
+        return;
       }
-      if(d1Success){
-        tampilkanToast('Sync ke D1 BERHASIL! + LocalStorage OK','success');
-        // Bersihkan antrian yang sama no_nota
-        try{ let q=JSON.parse(localStorage.getItem(LS_QUEUE)||'[]'); q=q.filter(x=>x.payload?.no_nota!==payload.no_nota); localStorage.setItem(LS_QUEUE, JSON.stringify(q)); }catch{}
-      } else {
-        tampilkanToast('D1 belum terpasang Worker (lihat worker.js). Data AMAN di LocalStorage + antrian sync. Error: '+lastErr,'error');
-        try{ const q=JSON.parse(localStorage.getItem(LS_QUEUE)||'[]'); q.push({payload, time:Date.now()}); localStorage.setItem(LS_QUEUE, JSON.stringify(q)); }catch{}
-        // Tampilkan cara perbaiki
-        console.warn('D1 FIX: Deploy worker.js ke Cloudflare Workers dan binding D1. Lihat file worker.js');
-      }
-      btn.disabled=false; btn.innerHTML=old; lucide.createIcons();
+      tampilkanToast('Tersimpan di D1! No Nota: ' + (payload.no_nota||'-'),'success');
+      try{ masterDataRows=[]; if(typeof renderTabel==='function') renderTabel(); if(typeof updateTotal==='function') updateTotal(); }catch{}
+    }catch(e){
+      tampilkanToast('Gagal simpan ke D1: ' + String(e.message||e) + ' — Cek koneksi / Functions. Data TIDAK disimpan ke LocalStorage (Wajib D1).','error');
+    }finally{
+      if(btn){ btn.disabled=false; btn.innerHTML='<i data-lucide="save" class="w-4 h-4"></i> Simpan Data ke D1'; try{ lucide.createIcons(); }catch{} }
     }
-  };
+};
 
   // Auto retry queue saat online
   async function retryQueue(){
@@ -3018,12 +2993,12 @@ console.log('FINAL LOCKED SUPER CEPAT AKTIF: maxTokens 2048, timeout 12s, model 
   <div class="bg-gray-900 border border-amber-500/30 rounded-2xl p-6 w-full max-w-sm mx-4">
     <div class="flex items-center gap-3 mb-4"><img src="data:image/png;base64,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" alt="Pandawa" class="h-12 w-auto"><div><h2 class="text-lg font-bold text-amber-300">PANDAWA OCR</h2><p class="text-xs text-gray-400">Silakan login</p></div></div>
     <label class="text-xs text-gray-400">Username</label>
-    <input id="loginUser" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-amber-500 text-gray-100" placeholder="" autocomplete="username">
+    <input id="loginUser" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-amber-500 text-gray-100" placeholder="admin" autocomplete="username">
     <label class="text-xs text-gray-400">Password</label>
-    <input id="loginPass" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-amber-500 text-gray-100" placeholder="" autocomplete="current-password">
+    <input id="loginPass" type="password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-amber-500 text-gray-100" placeholder="12345" autocomplete="current-password">
     <p id="loginError" class="text-xs text-red-400 mb-2 hidden">Username / password salah</p>
     <button onclick="doLogin()" class="w-full bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold py-2 rounded-lg text-sm">Login</button>
-    <p class="text-[10px] text-gray-500 mt-3 text-center">Silahkan Login</p>
+    <p class="text-[10px] text-gray-500 mt-3 text-center">Default: admin / 12345 — ganti password di Kelola User</p>
   </div>
 </div>
 <div id="aksesDitolakOverlay" class="fixed inset-0 z-[100000] bg-gray-950/95 flex items-center justify-center" style="display:none">
@@ -3038,15 +3013,35 @@ const AUTH_USERS_KEY='PANDAWA_USERS_V14';
 const AUTH_SESSION_KEY='PANDAWA_SESSION_V14';
 function getUsers(){ try{ let u=JSON.parse(localStorage.getItem(AUTH_USERS_KEY)||'[]'); if(!u.length){ u=[{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} } return u; }catch{ return [{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; } }
 function saveUsers(u){ try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} }
-function getSession(){ try{ const h=window.location.hash||''; if(h.startsWith('#s=')){ let b=h.slice(3).replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4) b+='='; const s=JSON.parse(decodeURIComponent(escape(atob(b)))); if(s && s.username){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} try{ history.replaceState({},'',window.location.pathname+window.location.search); }catch{} return s; } } }catch{} try{ const s=JSON.parse(localStorage.getItem(AUTH_SESSION_KEY)||'null'); if(s && s.username) return s; }catch{} return null; }
-function setSession(s){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
-function clearSession(){ try{ localStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
+function getSession(){
+  try{
+    const h=window.location.hash||'';
+    if(h.startsWith('#s=')){
+      let b=h.slice(3).replace(/-/g,'+').replace(/_/g,'/');
+      while(b.length%4) b+='=';
+      const s=JSON.parse(decodeURIComponent(escape(atob(b))));
+      if(s && s.username){
+        try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{}
+        try{ history.replaceState({},'',window.location.pathname+window.location.search); }catch{}
+        return s;
+      }
+    }
+  }catch{}
+  try{
+    const s=JSON.parse(sessionStorage.getItem(AUTH_SESSION_KEY)||'null');
+    if(s && s.username) return s;
+  }catch{}
+  return null;
+}
+function setSession(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
+function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
 function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
 function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
 function showLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
 function hideLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='none'; }
 function showAksesDitolak(role){ const o=document.getElementById('aksesDitolakOverlay'); const t=document.getElementById('aksesRoleTxt'); if(t) t.textContent=role||'-'; if(o) o.style.display='flex'; }
 async function doLogin(){
+  // [LOCK] Login WAJIB lewat D1 /api/auth (biar dapat token untuk simpan ke D1).
   const u=(document.getElementById('loginUser')?.value||'').trim();
   const p=(document.getElementById('loginPass')?.value||'');
   const errEl=document.getElementById('loginError');
@@ -3062,11 +3057,10 @@ async function doLogin(){
       if(errEl){ errEl.textContent = msg; errEl.classList.remove('hidden'); }
       return;
     }
-    // Login D1 berhasil: simpan token ke sessionStorage (bukan LocalStorage) + session
     const token = j.token || '';
     const user = j.user || { username:u, role:'user', nama:u };
     const s = { username:user.username, role:user.role, nama:user.nama||user.username, loginAt:Date.now() };
-    try{ if(typeof setToken==='function') setToken(token); else sessionStorage.setItem('PANDAWA_TOKEN', token); }catch{}
+    try{ sessionStorage.setItem('PANDAWA_TOKEN', token); }catch{}
     try{ if(typeof setSession==='function') setSession(s); else sessionStorage.setItem('PANDAWA_SESSION_V14', JSON.stringify(s)); }catch{}
     if(errEl) errEl.classList.add('hidden');
     hideLoginOverlay();

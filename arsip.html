@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
 <script>
-// WAJIB D1: LocalStorage HANYA untuk Gemini API Key (biar tanpa proxy). Selebihnya WAJIB D1.
+// WAJIB D1: LocalStorage HANYA untuk Gemini API Key (biar tanpa proxy). Selebihnya WAJIB D1. [LOCK]
 (function(){
   var ALLOWED = ['PANDAWA_API_KEYS_V14','PANDAWA_API_KEY_1','PANDAWA_API_KEY_2','PANDAWA_API_KEY_3','PANDAWA_KEYS_STD_V14','PANDAWA_API_KEYS_COUNT','pandawa_gemini_key'];
   try{
@@ -1142,15 +1142,35 @@ const AUTH_USERS_KEY='PANDAWA_USERS_V14';
 const AUTH_SESSION_KEY='PANDAWA_SESSION_V14';
 function getUsers(){ try{ let u=JSON.parse(localStorage.getItem(AUTH_USERS_KEY)||'[]'); if(!u.length){ u=[{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} } return u; }catch{ return [{username:'admin', password:'12345', role:'admin', nama:'Administrator', createdAt:Date.now()}]; } }
 function saveUsers(u){ try{ localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(u)); }catch{} }
-function getSession(){ try{ const h=window.location.hash||''; if(h.startsWith('#s=')){ let b=h.slice(3).replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4) b+='='; const s=JSON.parse(decodeURIComponent(escape(atob(b)))); if(s && s.username){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} try{ history.replaceState({},'',window.location.pathname+window.location.search); }catch{} return s; } } }catch{} try{ const s=JSON.parse(localStorage.getItem(AUTH_SESSION_KEY)||'null'); if(s && s.username) return s; }catch{} return null; }
-function setSession(s){ try{ localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
-function clearSession(){ try{ localStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
+function getSession(){
+  try{
+    const h=window.location.hash||'';
+    if(h.startsWith('#s=')){
+      let b=h.slice(3).replace(/-/g,'+').replace(/_/g,'/');
+      while(b.length%4) b+='=';
+      const s=JSON.parse(decodeURIComponent(escape(atob(b))));
+      if(s && s.username){
+        try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{}
+        try{ history.replaceState({},'',window.location.pathname+window.location.search); }catch{}
+        return s;
+      }
+    }
+  }catch{}
+  try{
+    const s=JSON.parse(sessionStorage.getItem(AUTH_SESSION_KEY)||'null');
+    if(s && s.username) return s;
+  }catch{}
+  return null;
+}
+function setSession(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} }
+function clearSession(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} }
 function loginUser(u,p){ const users=getUsers(); const found=users.find(x=>x.username===u && x.password===p); if(!found) return null; const s={username:found.username, role:found.role, nama:found.nama||found.username, loginAt:Date.now()}; setSession(s); return s; }
 function sessionHash(s){ try{ return '#s='+btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }catch{ return ''; } }
 function showLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
 function hideLoginOverlay(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='none'; }
 function showAksesDitolak(role){ const o=document.getElementById('aksesDitolakOverlay'); const t=document.getElementById('aksesRoleTxt'); if(t) t.textContent=role||'-'; if(o) o.style.display='flex'; }
 async function doLogin(){
+  // [LOCK] Login WAJIB lewat D1 /api/auth.
   const u=(document.getElementById('loginUser')?.value||'').trim();
   const p=(document.getElementById('loginPass')?.value||'');
   const errEl=document.getElementById('loginError');
@@ -1186,7 +1206,7 @@ function pergiKeKelolaUser(e){ try{ if(e) e.preventDefault(); }catch{} const s=g
 function cekAksesArsip(s){ if(!s) return; const bar=document.getElementById('userInfoBar'); if(bar){ bar.innerHTML='<span class="text-amber-300 font-bold">'+(s.nama||s.username)+'</span><span class="text-gray-500">('+s.role+')</span><button onclick="doLogout()" class="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-[11px] font-bold">Logout</button>'; } if(s.role!=='admin'){ showAksesDitolak(s.role); } }
 window.addEventListener('DOMContentLoaded', ()=>{ const s=getSession(); if(!s){ showLoginOverlay(); } else { hideLoginOverlay(); cekAksesArsip(s); } });
 document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getElementById('loginOverlay') && document.getElementById('loginOverlay').style.display!=='none' && (e.target.id==='loginPass'||e.target.id==='loginUser')) doLogin(); });
-(function(){ window.kembaliKeOCR=function(e){ try{ if(e) e.preventDefault(); }catch{} const s=getSession(); window.location.href=fileSaudara('index')+(s?sessionHash(s):''); return false; }; })();
+(function(){ window.kembaliKeOCR=function(e){ try{ if(e) e.preventDefault(); }catch{} try{ var s=(typeof getSession==='function')?getSession():null; var h=(s && typeof sessionHash==='function')?sessionHash(s):''; window.location.href=fileSaudara('index')+h; }catch{ window.location.href='index.html'; } return false; }; })();
 </script>
 </body>
 </html>
