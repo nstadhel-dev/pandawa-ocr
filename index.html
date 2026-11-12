@@ -1321,7 +1321,7 @@ window.addEventListener('DOMContentLoaded', function(){
             } else if (currentFormatNota === 'KNC_KNT_KNB') {
                 promptStructure = `{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"knl1": "salin persis, boleh 'P109'", "knt": "salin persis", "kng": "salin persis", "knl2": "salin persis", "kn": "salin persis", "glcc1": "salin persis", "glcc2": "salin persis", "gltl": "salin persis", "rb1": "salin persis", "rb2": "salin persis", "kps": "salin persis", "cm": "salin persis"}]}`;
             } else if (currentFormatNota === 'RINCIAN') {
-                promptStructure = `{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"jenis": "string", "berat": angka, "jumlah": angka}], "resiko1": angka, "resiko2": angka}`;
+                promptStructure = `{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"jenis": "string", "berat": "salin persis", "jumlah": "salin persis"}], "resiko1": "salin persis", "resiko2": "salin persis"}`;
             } else if (currentFormatNota === 'OTOMATIS') {
                 promptStructure = `{"nota": "string", "tanggal": "string", "nama_kapal": "string", "headers": ["<salin PERSIS header dari foto, jumlah kolom SESUAI foto>"], "rows": [[sel bebas: teks ATAU angka, sesuai isi foto]]}`;
             }
@@ -1403,8 +1403,8 @@ Struktur JSON: ${promptStructure}.`;
                     if (resultData.items && Array.isArray(resultData.items)) {
                         masterDataRows = normalisasiItemsHasil(resultData.items);
                     }
-                    if (resultData.resiko1 !== undefined) window.resiko1Val = resultData.resiko1;
-                    if (resultData.resiko2 !== undefined) window.resiko2Val = resultData.resiko2;
+                    if (resultData.resiko1 !== undefined) window.resiko1Val = bersihSelOtomatis(resultData.resiko1);
+                    if (resultData.resiko2 !== undefined) window.resiko2Val = bersihSelOtomatis(resultData.resiko2);
                     renderTableRows();
                 } else {
                     masterDataRows = normalisasiItemsHasil(resultData.items || []);
@@ -2684,7 +2684,7 @@ async function tampilkanNotaDariArsip(nota){
     let promptStruct="";
     if(currentFormatNota==='STANDART') promptStruct=`{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"jenis": "string", "berat": angka, "harga": angka, "jumlah": angka}]}`;
     else if(currentFormatNota==='KNC_KNT_KNB') promptStruct=`{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"knl1": "salin persis, boleh 'P109'", "knt": "salin persis", "kng": "salin persis", "knl2": "salin persis", "kn": "salin persis", "glcc1": "salin persis", "glcc2": "salin persis", "gltl": "salin persis", "rb1": "salin persis", "rb2": "salin persis", "kps": "salin persis", "cm": "salin persis"}]}`;
-    else if(currentFormatNota==='RINCIAN') promptStruct=`{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"jenis": "string", "berat": angka, "jumlah": angka}], "resiko1": angka, "resiko2": angka}`;
+    else if(currentFormatNota==='RINCIAN') promptStruct=`{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"jenis": "string", "berat": "salin persis", "jumlah": "salin persis"}], "resiko1": "salin persis", "resiko2": "salin persis"}`;
     else promptStruct=`{"nota": "string", "tanggal": "string", "nama_kapal": "string", "headers": ["<salin PERSIS header dari foto, jumlah kolom SESUAI foto>"], "rows": [[sel bebas: teks ATAU angka, sesuai isi foto]]}`;
     const promptText=`Kamu adalah mesin OCR transkripsi nota. Tugasmu SATU-SATUNYA: SALIN PERSIS apa yang tertulis di foto nota ini ke dalam JSON. Bukan menafsir, bukan merapikan, bukan menghitung.
 ATURAN BACA (WAJIB, JANGAN DILANGGAR):
@@ -2740,8 +2740,8 @@ Struktur JSON: ${promptStruct}.`;
         renderStrukturTabel();
       } else if(currentFormatNota==='RINCIAN'){
         if(resultData.items) masterDataRows=normalisasiItemsHasil(resultData.items);
-        if(resultData.resiko1!==undefined) window.resiko1Val=resultData.resiko1;
-        if(resultData.resiko2!==undefined) window.resiko2Val=resultData.resiko2;
+        if(resultData.resiko1!==undefined) window.resiko1Val=bersihSelOtomatis(resultData.resiko1);
+        if(resultData.resiko2!==undefined) window.resiko2Val=bersihSelOtomatis(resultData.resiko2);
         renderTableRows();
       } else { masterDataRows=normalisasiItemsHasil(resultData.items||[]); renderTableRows(); }
       currentPage=1; renderTableRows(); savePro();
@@ -3211,9 +3211,10 @@ document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getEl
 <!-- [LOCK] OVERRIDE FINAL -->
 <script>
 
-// CEPAT + AKURAT (REV37): siapkan foto untuk ekstrak.
-// Gemini tetap downscale foto besar di servernya, jadi kirim 4000px+ hanya buang waktu upload.
-// Sweet spot: maks 3000px + JPEG 92% + kontras diperkuat -> digit tajam, file ~50% lebih kecil dari asli.
+// PERTAHANKAN KUALITAS + AKURAT (REV39): siapkan foto untuk ekstrak.
+// ATURAN: TIDAK PERNAH turunkan resolusi / kualitas foto asli. Foto besar dikirim APA ADANYA (paling cepat, kualitas 100%).
+// Foto KECIL (<2000px) justru DIPERBESAR ke 2000px + kontras diperkuat, supaya garis tipis angka '1' tulisan tangan tidak hilang di mata model.
+// Alur sesuai permintaan: upload pertahankan kualitas -> ekstrak cepat + akurat -> simpan D1 kompres 75%.
 window.siapkanFotoEkstrak = async function(src){
   if(!src) return src;
   try{
@@ -3221,14 +3222,18 @@ window.siapkanFotoEkstrak = async function(src){
       const im = new Image();
       im.onload = ()=>{
         try{
-          const MAX = 3000;
-          let w = im.width, h = im.height;
-          if(w > MAX || h > MAX){ if(w > h){ h = Math.round(h*MAX/w); w = MAX; } else { w = Math.round(w*MAX/h); h = MAX; } }
+          // Foto sudah cukup besar (>=2000px): kirim APA ADANYA, tanpa olah ulang. Paling cepat, kualitas 100%.
+          if(im.width >= 2000){ res(src); return; }
+          // Foto kecil: perbesar ke 2000px + kontras, supaya digit tipis terbaca model.
+          const TARGET = 2000;
+          const scale = TARGET / im.width;
+          const w = TARGET, h = Math.round(im.height * scale);
           const c = document.createElement('canvas'); c.width = w; c.height = h;
           const ctx = c.getContext('2d');
-          try{ ctx.filter = 'contrast(1.2) brightness(1.03)'; }catch{}
+          try{ ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; }catch{}
+          try{ ctx.filter = 'contrast(1.3) brightness(1.05)'; }catch{}
           ctx.drawImage(im, 0, 0, w, h);
-          res(c.toDataURL('image/jpeg', 0.92));
+          res(c.toDataURL('image/jpeg', 0.95));
         }catch{ res(src); }
       };
       im.onerror = ()=>res(src);
