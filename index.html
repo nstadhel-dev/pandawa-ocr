@@ -765,16 +765,75 @@ window.addEventListener('DOMContentLoaded', function(){
       if(s==='') return '';
       const hasHuruf=/[A-Za-z]/.test(s);
       const hasAngka=/[0-9]/.test(s);
-      if(hasHuruf && hasAngka){
-        // Ambil angka saja: buang huruf, spasi, Rp, dll. Pertahankan digit, titik/koma desimal, minus.
-        let num=s.replace(/[^0-9.,-]/g,'').replace(/,/g,'.');
-        // Jika ada lebih dari 1 titik (misal 1.234.567) -> anggap titik ribuan, buang semua titik kecuali desimal terakhir
-        const parts=num.split('.');
-        if(parts.length>2){ const dec=parts.pop(); num=parts.join('')+'.'+dec; }
+      // FORMAT INDONESIA (REV38): titik = pemisah ribuan, koma = desimal. Contoh: '1.138'->1138, '1.500'->1500, '2,5'->2.5
+      const keAngka=(str)=>{
+        let num=str.replace(/[^0-9.,-]/g,'');
+        if(num===''||num==='-'||num==='.'||num===',') return null;
+        if(num.includes(',')){ num=num.replace(/\./g,'').replace(',', '.'); }
+        else { num=num.replace(/\./g,''); }
+        if(!/^-?\d+(\.\d+)?$/.test(num)) return null;
         const n=parseFloat(num);
-        return isNaN(n)?'':n;
+        return isNaN(n)?null:n;
+      };
+      if(hasHuruf && hasAngka){
+        // Sel huruf+angka: HURUF DIBUANG DI SINI OLEH KODE (bukan oleh model) -> tidak pernah salah baca.
+        // Contoh: 'P109'->109, 'H104'->104, 'M51'->51, 'S112'->112, 'H 60'->60, 'Rp 1.500'->1500
+        const n=keAngka(s);
+        return n==null?'':n;
+      }
+      if(hasAngka && !hasHuruf){
+        // Hanya angka: kalau ada titik/koma, terapkan format Indonesia. Kalau tidak, kembalikan apa adanya.
+        if(s.includes('.')||s.includes(',')){
+          const n=keAngka(s);
+          if(n!=null) return n;
+        }
+        return s;
       }
       return s;
+    }
+    // REV38: normalisasi items hasil ekstrak (STANDART / KNC / RINCIAN).
+    // Model HANYA menyalin persis (boleh 'P109'); kode di sini yang mengubah jadi angka. Kode tidak pernah salah baca.
+    // Field 'jenis' (nama) tidak dibersihkan supaya teksnya utuh.
+    // CM: buang awalan nomor baris 'N.' kalau cocok dengan nomor baris (baris 1: '1.138' -> 138).
+    // REV41 - AKURAT, TIDAK TEBAK: kolom angka HANYA angka murni, huruf TIDAK PERNAH tampil.
+    // Jika tidak jelas/buram -> KOSONGKAN ('') untuk entri manual, jangan tebak angka salah. Berlaku KHUSUS KNC/KNT/KNB.
+    // 'M 120'->120, 'P 111'->111, 'G 120'->120, 'MU 112'->112, 'I 115'->115, 'H 104'->104, 'C 26'->26.
+    // 'MU' (hanya huruf, tanpa angka) -> '' (kosong), bukan 0, bukan hurufnya.
+    // Sel kosong di foto -> '' (kosong).
+    function angkaMurni(v){
+      if(v==null) return '';
+      if(typeof v === 'number') return isNaN(v)?'':v;
+      const s=String(v).trim();
+      if(s==='') return '';
+      if(!/[0-9]/.test(s)) return ''; // hanya huruf, tanpa angka -> kosong untuk manual
+      // Buang SEMUA huruf & spasi, sisakan digit, titik ribuan, koma desimal, minus.
+      let num=s.replace(/[^0-9.,-]/g,'');
+      if(num===''||num==='-'||num==='.'||num===',') return '';
+      if(num.includes(',')){ num=num.replace(/\./g,'').replace(',', '.'); }
+      else { num=num.replace(/\./g,''); }
+      if(!/^-?\d+(\.\d+)?$/.test(num)) return '';
+      const n=parseFloat(num);
+      return isNaN(n)?'':n;
+    }
+    // Alias lama tetap jalan, tapi sekarang mengembalikan '' jika tidak ada digit
+    function angkaMurniAtauKosong(v){ return angkaMurni(v); }
+    function normalisasiItemsHasil(items){
+      if(!Array.isArray(items)) return items||[];
+      return items.map((it, ri)=>{
+        if(!it || typeof it !== 'object') return it;
+        const out={};
+        const rowNum=ri+1;
+        for(const k of Object.keys(it)){
+          let v=it[k];
+          if(k==='jenis'){ out[k]=v; continue; } // nama jenis (Tengahan/Cumi) tetap teks, bukan kolom angka
+          if(k==='cm' && typeof v==='string'){
+            const m=v.trim().match(/^(\d+)\.(\d+)$/);
+            if(m && parseInt(m[1],10)===rowNum){ v=m[2]; }
+          }
+          out[k]=angkaMurni(v); // REV40: paksa angka murni, huruf TIDAK PERNAH lolos
+        }
+        return out;
+      });
     }
     function otomatisHeadersTampil(){
             // TAMPILAN SAJA: header asli kalau ada, sisanya placeholder 'Kolom N'. TIDAK PERNAH ditulis ke otomatisHeaders, TIDAK PERNAH tersimpan. Biar setelah simpan + tampil, yang muncul header foto, bukan 'Kolom 1 / Kolom 2'.
@@ -789,7 +848,7 @@ window.addEventListener('DOMContentLoaded', function(){
       let rows = [];
       if (Array.isArray(resultData.rows)) rows = resultData.rows;
       else if (Array.isArray(resultData.items)) rows = resultData.items.map(it=> typeof it==='object' ? Object.values(it) : [it]);
-      rows = rows.filter(r=> Array.isArray(r) ? r.length>0 : r!=null).map(r=> Array.isArray(r) ? r.slice() : [r]).map(r=> r.map(c=> bersihSelOtomatis(c)));
+      rows = rows.filter(r=> Array.isArray(r) ? r.length>0 : r!=null).map(r=> Array.isArray(r) ? r.slice() : [r]).map((r, ri)=> r.map(c=>{ if(typeof c==='string'){ const m=c.trim().match(/^(\d+)\.(\d+)$/); if(m && parseInt(m[1],10)===ri+1){ return angkaMurni(m[2]); } if(/[0-9]/.test(c)) return angkaMurni(c); } return bersihSelOtomatis(c); }));
       // Header kosong dibiarkan kosong (tampilan pakai placeholder di otomatisHeadersTampil), bukan dibikin 'Kolom N' palsu yang lalu tersimpan.
       const n = Math.max(headers.length, ...rows.map(r=>r.length), 0);
       // Header yang kurang dibiarkan kosong (tampilan dilengkapi placeholder), tidak dibikin 'Kolom N' palsu.
@@ -1198,7 +1257,7 @@ window.addEventListener('DOMContentLoaded', function(){
         }
 
         function hapusGambar() {
-            currentBase64Image = null;
+            currentBase64Image = null; window._fotoAsliHiRes = null;
             document.getElementById('imagePreview').src = '';
             document.getElementById('previewContainer').classList.add('hidden');
             document.getElementById('placeholderContent').classList.remove('hidden');
@@ -1274,21 +1333,46 @@ window.addEventListener('DOMContentLoaded', function(){
             const btnProses = document.getElementById('btnProses');
             btnProses.disabled = true;
 
-            const base64Data = currentBase64Image.split(',')[1];
+            const _fotoEkstrak = await window.siapkanFotoEkstrak((window._fotoAsliHiRes && window._fotoAsliHiRes.length > 1000) ? window._fotoAsliHiRes : currentBase64Image); // REV37: 3000px/92% + kontras — cepat + akurat
+            const base64Data = _fotoEkstrak.split(',')[1];
             const mimeType = currentBase64Image.match(/data:(.*?);base64/)[1] || 'image/jpeg';
 
             let promptStructure = "";
             if (currentFormatNota === 'STANDART') {
                 promptStructure = `{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"jenis": "string", "berat": angka, "harga": angka, "jumlah": angka}]}`;
             } else if (currentFormatNota === 'KNC_KNT_KNB') {
-                promptStructure = `{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"knl1": angka, "knt": angka, "kng": angka, "knl2": angka, "kn": angka, "glcc1": angka, "glcc2": angka, "gltl": angka, "rb1": angka, "rb2": angka, "kps": angka, "cm": angka}]}`;
+                promptStructure = `{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"knl1": "salin persis, boleh 'P109'", "knt": "salin persis", "kng": "salin persis", "knl2": "salin persis", "kn": "salin persis", "glcc1": "salin persis", "glcc2": "salin persis", "gltl": "salin persis", "rb1": "salin persis", "rb2": "salin persis", "kps": "salin persis", "cm": "salin persis"}]}`;
             } else if (currentFormatNota === 'RINCIAN') {
-                promptStructure = `{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"jenis": "string", "berat": angka, "jumlah": angka}], "resiko1": angka, "resiko2": angka}`;
+                promptStructure = `{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"jenis": "string", "berat": "salin persis", "jumlah": "salin persis"}], "resiko1": "salin persis", "resiko2": "salin persis"}`;
             } else if (currentFormatNota === 'OTOMATIS') {
                 promptStructure = `{"nota": "string", "tanggal": "string", "nama_kapal": "string", "headers": ["<salin PERSIS header dari foto, jumlah kolom SESUAI foto>"], "rows": [[sel bebas: teks ATAU angka, sesuai isi foto]]}`;
             }
 
-            let promptText = `Bertindaklah sebagai OCR ekstraksi nota profesional. Ekstrak foto nota ini dalam JSON valid tanpa markdown dengan struktur: ${promptStructure}. ATURAN OTOMATIS (PENTING): JANGAN tentukan jumlah kolom. Baca header ASLI dari foto apa adanya dan jadikan headers (boleh 2,3,4,5,6+ kolom). Tiap baris rows panjangnya SAMA dengan headers. Tiap sel boleh TEKS atau ANGKA sesuai isi foto - JANGAN buang kolom teks (misal Jenis/Nama/Keterangan). TAPI jika satu sel berisi HURUF + ANGKA (misal 'AB123', 'Cumi 250', 'Rp 1.500 X'), keluarkan ANGKA-nya saja, hurufnya dihapus (jadi 123, 250, 1500). Jika sel hanya teks tanpa angka (misal 'CUMI'), biarkan teksnya. Angka tulis tanpa Rp/titik ribuan.`;
+            let promptText = `Kamu adalah mesin OCR transkripsi nota. Tugasmu SATU-SATUNYA: SALIN PERSIS apa yang tertulis di foto nota ini ke dalam JSON. Bukan menafsir, bukan merapikan, bukan menghitung.
+ATURAN BACA (WAJIB, JANGAN DILANGGAR):
+1. SALIN HURUF DEMI HURUF, ANGKA DEMI ANGKA. Apa yang tertulis di foto, itulah yang kamu tulis. Jangan menebak, jangan mengarang, jangan melengkapi kata yang terpotong.
+2. JANGAN UBAH ANGKA SEDIKIT PUN. Jangan membulatkan, jangan menukar digit. Contoh: 1.500 = 1500, 2,5 = 2.5, 12.750 = 12750. Bedakan dengan teliti: 1 vs 7, 3 vs 8, 0 vs O, 5 vs 6, 2 vs Z. Kalau angka di foto buram, baca dari bentuknya yang paling mirip, jangan asal isi.
+3. KHUSUS TULISAN TANGAN - SALIN PERSIS, JANGAN BUANG APA PUN:
+   - Tugasmu HANYA menyalin. JANGAN membuang huruf awalan, JANGAN mengubah angka. Sistem yang akan mengambil angkanya. Contoh SALIN yang benar: sel tertulis 'P 109' disalin 'P109' (BUKAN '9'), sel '111' disalin '111' (BUKAN '11'), sel '106' disalin '106' (BUKAN '6'), sel '116' disalin '116' (BUKAN '46'), sel 'H 112' disalin 'H112' (BUKAN '42'), sel 'S 112' disalin 'S112' (JANGAN dikosongkan jadi 0), sel '182' disalin '182' (BUKAN '132').
+   - Angka 1 tulisan tangan adalah GARIS TEGAK TIPIS, gampang terlewat atau nyatu dengan huruf awalan. HITUNG dengan teliti berapa banyak garis tegak 1. Contoh: '111' = TIGA garis tegak (bukan 11), '112' = 1-1-2 (bukan 42), '109' = 1-0-9 (bukan 9).
+   - Huruf awalan (P, H, S, M, dll) adalah HURUF, SALIN APA ADANYA. Huruf H BUKAN angka 4. Jangan buang hurufnya, jangan ubah jadi angka. Contoh: 'P109' tetap 'P109', 'H112' tetap 'H112', 'S112' tetap 'S112', 'M51' tetap 'M51'.
+   - Untuk tiap sel: HITUNG dulu berapa digit angkanya di foto, baru salin. Jumlah digit di hasil HARUS SAMA dengan jumlah digit di foto. Kalau di foto ada 3 digit, hasil harus 3 digit.
+   - Bedakan 8 dan 3: angka 8 punya DUA lingkaran (atas dan bawah), angka 3 hanya SATU lekukan. Contoh: '182' disalin '182' (bukan '132').
+   - JANGAN kosongkan sel yang ada tulisannya. Kalau di foto ada tulisan di sel, pasti ada isinya. Jangan isi 0 kalau di foto ada tulisan.
+4. JANGAN BUANG KOLOM. Jangan buang kolom teks (Jenis/Nama/Keterangan/Kapal). Untuk ISI sel: SALIN PERSIS APA ADANYA, TERMASUK HURUFNYA, tanpa spasi. Jangan buang hurufnya, jangan ubah angkanya. Contoh: 'DL42' disalin 'DL42' (bukan 42), 'A43' disalin 'A43', 'Er121' disalin 'Er121', 'CUMI 250' disalin 'CUMI250', 'AB123' disalin 'AB123', 'Rp 1.500' disalin 'Rp1500', 'P 109' disalin 'P109'. Kalau sel HANYA teks tanpa angka (misal 'CUMI'), tulis teksnya apa adanya. Jangan gabung dua sel jadi satu, jangan pisah satu sel jadi dua.
+4a. HURUF AWALAN ADALAH KODE, BUKAN ANGKA - JANGAN DIGABUNG DENGAN ANGKA. JIKA TIDAK JELAS/BURAM, KOSONGKAN SAJA (""). Berlaku untuk SEMUA kolom. Huruf yang sering muncul di depan angka: M, P, G, MU, I, H, C, m. Huruf-huruf ini adalah kode, BUKAN bagian dari angka, dan TIDAK DITAMPILKAN di hasil akhir (sistem yang membuangnya, hasil akhir hanya angka).
+   - PENTING: huruf I (i besar) adalah HURUF, BUKAN angka 1. Bentuknya mirip, tapi jangan digabung. Contoh: 'I 115' = huruf I + angka 115 (hasil akhir 115, BUKAN 1115). 'I 120' = 120 (bukan 1120). 'I 113' = 113 (bukan 1113).
+   - Contoh salin yang benar: 'M 120' disalin 'M120' (hasil 120), 'P 111' disalin 'P111' (hasil 111), 'G 120' disalin 'G120' (hasil 120), 'MU 112' disalin 'MU112' (hasil 112), 'H 104' disalin 'H104' (hasil 104), 'C 26' disalin 'C26' (hasil 26), 'P 4' disalin 'P4' (hasil 4), 'm 68' disalin 'm68' (hasil 68).
+   - JANGAN pernah menggabung huruf dengan angka jadi satu bilangan. 'MU 112' bukan 112112, bukan 11212. 'G 40' bukan 640.
+4b. AKURASI DI ATAS SEGALANYA - KHUSUS KNC/KNT/KNB: Jika sel buram, tidak jelas, terpotong, atau ragu antara 2 angka, KOSONGKAN SAJA (""), JANGAN menebak. Biarkan kosong untuk entri manual. Lebih baik kosong daripada salah. Contoh: kalau 'P 111' terlihat seperti 'P 11?' (ragu angka terakhir), tulis "" bukan "111" atau "11". Kalau sel kosong di foto, tulis "". Berlaku untuk SEMUA kolom KNC/KNT/KNB.
+4b. KOLOM CM: salin persis juga, termasuk angka sebelum titik. Contoh: '1.138' disalin '1.138' (bukan 138), '2.139' disalin '2.139'. Sistem yang akan memisahkan nomor barisnya.
+5. BACA BARIS DEMI BARIS, KOLOM DEMI KOLOM, dari kiri ke kanan, atas ke bawah. Jumlah baris di JSON harus SAMA dengan jumlah baris di foto. Jangan tambah baris, jangan hilangkan baris, jangan duplikasi baris.
+6. JANGAN MENGHITUNG. Jangan isi kolom Jumlah dari Berat x Harga. Salin Jumlah dari foto apa adanya. Kalau kolom Jumlah di foto kosong, isi 0.
+7. TANGGAL & NAMA: salin tanggal dan nama kapal persis seperti di foto (format tanggal jangan diubah: 12/01/2026 tetap 12/01/2026, jangan dibalik jadi 2026-01-12).
+8. SEBELUM MENJAWAB, PERIKSA ULANG tiap angka dan tiap nama: bandingkan satu per satu dengan foto. Kalau ada yang ragu, pilih bacaan yang bentuk huruf/angkanya PALING MIRIP dengan foto.
+9. Jawab HANYA JSON valid, tanpa markdown, tanpa penjelasan, tanpa komentar.
+Struktur JSON: ${promptStructure}.`;
+
 
             const candidateModels = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"];
             let success = false;
@@ -1303,6 +1387,7 @@ window.addEventListener('DOMContentLoaded', function(){
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             contents: [{
+                            generationConfig: { temperature: 0, topP: 0.1, maxOutputTokens: 8192, responseMimeType: 'application/json' },
                                 parts: [
                                     { text: promptText },
                                     { inlineData: { mimeType: mimeType, data: base64Data } }
@@ -1343,13 +1428,13 @@ window.addEventListener('DOMContentLoaded', function(){
                     renderStrukturTabel();
                 } else if (currentFormatNota === 'RINCIAN') {
                     if (resultData.items && Array.isArray(resultData.items)) {
-                        masterDataRows = resultData.items;
+                        masterDataRows = normalisasiItemsHasil(resultData.items);
                     }
-                    if (resultData.resiko1 !== undefined) window.resiko1Val = resultData.resiko1;
-                    if (resultData.resiko2 !== undefined) window.resiko2Val = resultData.resiko2;
+                    if (resultData.resiko1 !== undefined) window.resiko1Val = bersihSelOtomatis(resultData.resiko1);
+                    if (resultData.resiko2 !== undefined) window.resiko2Val = bersihSelOtomatis(resultData.resiko2);
                     renderTableRows();
                 } else {
-                    masterDataRows = resultData.items || [];
+                    masterDataRows = normalisasiItemsHasil(resultData.items || []);
                     renderTableRows();
                 }
 
@@ -2302,7 +2387,7 @@ async function tampilkanNotaDariArsip(nota){
   window.testK=async function(n){
     const key=document.getElementById('proK'+n).value.trim(); const st=document.getElementById('proS'+n);
     if(!isValidKey(key)){ st.textContent='❌ Key terlalu pendek (min 15 karakter)'; st.style.color='#f87171'; return; }
-    st.textContent='⏳ Testing model baru (3.5-flash-lite → 3-flash → 2.5-lite → 2.0-flash)...';
+    st.textContent='⏳ Testing model baru (3.5-flash-lite → 3-flash → 3-pro)...';
     st.style.color='#fbbf24';
     const info=await callDirectWithInfo(key,'test');
     if(info.ok){
@@ -2485,12 +2570,12 @@ async function tampilkanNotaDariArsip(nota){
       r.onload=ev=>{
         const img=new Image();
         img.onload=()=>{
-          const MAX=1600; let w=img.width, h=img.height;
+          const MAX=2400; let w=img.width, h=img.height;
           if(w>MAX||h>MAX){ if(w>h){ h=Math.round(h*MAX/w); w=MAX; } else { w=Math.round(w*MAX/h); h=MAX; } }
           const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
           const ctx=cv.getContext('2d'); ctx.filter='contrast(1.15) brightness(1.05) saturate(0.2)'; ctx.drawImage(img,0,0,w,h);
-          const dataUrl=cv.toDataURL('image/jpeg',0.75);
-          const info=`${w}x${h} | ${(file.size/1024).toFixed(0)}KB→${(dataUrl.length*0.75/1024).toFixed(0)}KB | JPEG 75% OCR`;
+          const dataUrl=cv.toDataURL('image/jpeg',0.92);
+          const info=`${w}x${h} | ${(file.size/1024).toFixed(0)}KB→${(dataUrl.length*0.75/1024).toFixed(0)}KB | JPEG 92% OCR-AKURAT`;
           resolve({base64:dataUrl, info});
         };
         img.onerror=()=>reject(new Error('Gagal load gambar'));
@@ -2503,8 +2588,10 @@ async function tampilkanNotaDariArsip(nota){
   const origHandle=window.handleFileSelect;
   window.handleFileSelect=async function(e){
     const file=e.target.files[0]; if(!file) return;
-    tampilkanToast('Kompres foto ke standar OCR (1600px / 75%)...','success');
+    tampilkanToast('Siapkan foto tajam untuk OCR akurat (2400px / 92%)...','success');
     try{
+      // AKURASI: simpan foto ASLI (tanpa kompres) untuk ekstrak — paling tajam, angka tidak salah baca
+      try{ const _r=new FileReader(); _r.onload=(ev)=>{ window._fotoAsliHiRes=ev.target.result; }; _r.readAsDataURL(file); }catch{}
       const {base64, info}=await compressForOCR(file);
       currentBase64Image=base64; window.currentBase64Image=base64;
       document.getElementById('imagePreview').src=base64;
@@ -2524,14 +2611,15 @@ async function tampilkanNotaDariArsip(nota){
     const canvas=document.getElementById('canvasCapture');
     canvas.width=video.videoWidth||1280; canvas.height=video.videoHeight||960;
     canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
-    const temp=canvas.toDataURL('image/jpeg',0.85);
+    const temp=canvas.toDataURL('image/jpeg',0.92);
+    window._fotoAsliHiRes=temp; // AKURASI: foto kamera full-res untuk ekstrak
     const img=new Image();
     img.onload=()=>{
-      const MAX=1600; let w=img.width, h=img.height;
+      const MAX=2400; let w=img.width, h=img.height;
       if(w>MAX||h>MAX){ if(w>h){ h=Math.round(h*MAX/w); w=MAX; } else { w=Math.round(w*MAX/h); h=MAX; } }
       const c2=document.createElement('canvas'); c2.width=w; c2.height=h;
       const ctx2=c2.getContext('2d'); ctx2.filter='contrast(1.15) brightness(1.05)'; ctx2.drawImage(img,0,0,w,h);
-      const finalB64=c2.toDataURL('image/jpeg',0.75);
+      const finalB64=c2.toDataURL('image/jpeg',0.92);
       currentBase64Image=finalB64; window.currentBase64Image=finalB64;
       document.getElementById('imagePreview').src=finalB64;
       document.getElementById('placeholderContent').classList.add('hidden');
@@ -2619,22 +2707,35 @@ async function tampilkanNotaDariArsip(nota){
     pre.classList.remove('hidden');
     const btn=document.getElementById('btnProses'); btn.disabled=true;
     const _t0=Date.now();
-    // SUPER CEPAT: kirim versi 1280px / JPEG 68% khusus ekstrak (preview 1600px tetap utuh, tidak dirubah).
-    // Payload ~40% lebih kecil -> upload + token vision lebih cepat, tapi nota tetap terbaca jelas.
-    let _imgKirim=currentBase64Image;
-    try{
-      _imgKirim=await new Promise((res)=>{
-        const _im=new Image();
-        _im.onload=()=>{ const MAX=2000; let w=_im.width,h=_im.height; if(w>MAX||h>MAX){ if(w>h){ h=Math.round(h*MAX/w); w=MAX; } else { w=Math.round(w*MAX/h); h=MAX; } } const _c=document.createElement('canvas'); _c.width=w; _c.height=h; _c.getContext('2d').drawImage(_im,0,0,w,h); res(_c.toDataURL('image/jpeg',0.88)); };
-        _im.onerror=()=>res(currentBase64Image); _im.src=currentBase64Image;
-      });
-    }catch{ _imgKirim=currentBase64Image; }
+    let _imgKirim = await window.siapkanFotoEkstrak((window._fotoAsliHiRes && window._fotoAsliHiRes.length > 1000) ? window._fotoAsliHiRes : currentBase64Image); // REV37: 3000px/92% + kontras — cepat + akurat
     let promptStruct="";
     if(currentFormatNota==='STANDART') promptStruct=`{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"jenis": "string", "berat": angka, "harga": angka, "jumlah": angka}]}`;
-    else if(currentFormatNota==='KNC_KNT_KNB') promptStruct=`{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"knl1": angka, "knt": angka, "kng": angka, "knl2": angka, "kn": angka, "glcc1": angka, "glcc2": angka, "gltl": angka, "rb1": angka, "rb2": angka, "kps": angka, "cm": angka}]}`;
-    else if(currentFormatNota==='RINCIAN') promptStruct=`{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"jenis": "string", "berat": angka, "jumlah": angka}], "resiko1": angka, "resiko2": angka}`;
+    else if(currentFormatNota==='KNC_KNT_KNB') promptStruct=`{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"knl1": "salin persis, boleh 'P109'", "knt": "salin persis", "kng": "salin persis", "knl2": "salin persis", "kn": "salin persis", "glcc1": "salin persis", "glcc2": "salin persis", "gltl": "salin persis", "rb1": "salin persis", "rb2": "salin persis", "kps": "salin persis", "cm": "salin persis"}]}`;
+    else if(currentFormatNota==='RINCIAN') promptStruct=`{"nota": "string", "tanggal": "string", "nama_kapal": "string", "items": [{"jenis": "string", "berat": "salin persis", "jumlah": "salin persis"}], "resiko1": "salin persis", "resiko2": "salin persis"}`;
     else promptStruct=`{"nota": "string", "tanggal": "string", "nama_kapal": "string", "headers": ["<salin PERSIS header dari foto, jumlah kolom SESUAI foto>"], "rows": [[sel bebas: teks ATAU angka, sesuai isi foto]]}`;
-    const promptText=`Ekstrak nota ini jadi JSON saja, struktur: ${promptStruct}. Aturan: header SALIN PERSIS dari foto (jangan tentukan jumlah kolom, panjang rows = panjang headers). Sel boleh teks/angka sesuai foto, jangan buang kolom teks. Sel huruf+angka (misal 'AB123','Rp 1.500 X') -> angka saja (123,1500). Sel hanya teks (misal 'CUMI') -> biarkan teks. Angka tanpa Rp/titik ribuan. Ini TULISAN TANGAN: baca per baris dari kiri ke kanan, satu sel satu angka, jangan gabung 2 sel jadi satu, jangan tebak angka. Sel kosong -> 0. Angka tulisan tangan dibaca digit per digit. KHUSUS OTOMATIS: HEADER salin PERSIS dari foto (jumlah kolom dan nama header HARUS sama dengan foto, jangan tambah/kurangi/ubah nama). Tapi ISI SEL: kalau sel ada huruf+angka (misal DL42, A43, Er121), tampilkan ANGKA-nya saja, hurufnya dihapus (jadi 42, 43, 121). Sel hanya teks tetap teks.`;
+    const promptText=`Kamu adalah mesin OCR transkripsi nota. Tugasmu SATU-SATUNYA: SALIN PERSIS apa yang tertulis di foto nota ini ke dalam JSON. Bukan menafsir, bukan merapikan, bukan menghitung.
+ATURAN BACA (WAJIB, JANGAN DILANGGAR):
+1. SALIN HURUF DEMI HURUF, ANGKA DEMI ANGKA. Apa yang tertulis di foto, itulah yang kamu tulis. Jangan menebak, jangan mengarang, jangan melengkapi kata yang terpotong.
+2. JANGAN UBAH ANGKA SEDIKIT PUN. Jangan membulatkan, jangan menukar digit. Contoh: 1.500 = 1500, 2,5 = 2.5. Bedakan dengan teliti: 1 vs 7, 3 vs 8, 0 vs O, 5 vs 6, 2 vs Z. TULISAN TANGAN: baca digit per digit, satu sel satu angka.
+3. KHUSUS TULISAN TANGAN - SALIN PERSIS, JANGAN BUANG APA PUN:
+   - Tugasmu HANYA menyalin. JANGAN membuang huruf awalan, JANGAN mengubah angka. Sistem yang akan mengambil angkanya. Contoh SALIN yang benar: sel tertulis 'P 109' disalin 'P109' (BUKAN '9'), sel '111' disalin '111' (BUKAN '11'), sel '106' disalin '106' (BUKAN '6'), sel '116' disalin '116' (BUKAN '46'), sel 'H 112' disalin 'H112' (BUKAN '42'), sel 'S 112' disalin 'S112' (JANGAN dikosongkan jadi 0), sel '182' disalin '182' (BUKAN '132').
+   - Angka 1 tulisan tangan adalah GARIS TEGAK TIPIS, gampang terlewat atau nyatu dengan huruf awalan. HITUNG dengan teliti berapa banyak garis tegak 1. Contoh: '111' = TIGA garis tegak (bukan 11), '112' = 1-1-2 (bukan 42), '109' = 1-0-9 (bukan 9).
+   - Huruf awalan (P, H, S, M, dll) adalah HURUF, SALIN APA ADANYA. Huruf H BUKAN angka 4. Jangan buang hurufnya, jangan ubah jadi angka. Contoh: 'P109' tetap 'P109', 'H112' tetap 'H112', 'S112' tetap 'S112', 'M51' tetap 'M51'.
+   - Untuk tiap sel: HITUNG dulu berapa digit angkanya di foto, baru salin. Jumlah digit di hasil HARUS SAMA dengan jumlah digit di foto. Kalau di foto ada 3 digit, hasil harus 3 digit.
+   - Bedakan 8 dan 3: angka 8 punya DUA lingkaran (atas dan bawah), angka 3 hanya SATU lekukan. Contoh: '182' disalin '182' (bukan '132').
+   - JANGAN kosongkan sel yang ada tulisannya. Kalau di foto ada tulisan di sel, pasti ada isinya. Jangan isi 0 kalau di foto ada tulisan.
+4. JANGAN BUANG KOLOM. Jangan buang kolom teks. Untuk ISI sel: SALIN PERSIS APA ADANYA, TERMASUK HURUFNYA, tanpa spasi. Jangan buang hurufnya, jangan ubah angkanya. Contoh: 'DL42' disalin 'DL42' (bukan 42), 'A43' disalin 'A43', 'Er121' disalin 'Er121', 'CUMI 250' disalin 'CUMI250', 'P 109' disalin 'P109'. Kalau sel HANYA teks tanpa angka (misal 'CUMI'), tulis teksnya apa adanya. Jangan gabung 2 sel jadi satu, jangan pisah satu sel jadi dua.
+4a. HURUF AWALAN ADALAH KODE, BUKAN ANGKA - JANGAN DIGABUNG DENGAN ANGKA. JIKA TIDAK JELAS/BURAM, KOSONGKAN SAJA (""). Berlaku untuk SEMUA kolom. Huruf yang sering muncul: M, P, G, MU, I, H, C, m. Huruf ini kode, BUKAN bagian angka, TIDAK DITAMPILKAN di hasil akhir (sistem yang membuangnya, hasil akhir hanya angka).
+   - PENTING: huruf I adalah HURUF, BUKAN angka 1. 'I 115' = huruf I + angka 115 (hasil 115, BUKAN 1115). 'I 120' = 120 (bukan 1120).
+   - Contoh: 'M 120' disalin 'M120' (hasil 120), 'P 111' disalin 'P111' (hasil 111), 'G 120' disalin 'G120' (hasil 120), 'MU 112' disalin 'MU112' (hasil 112), 'H 104' disalin 'H104' (hasil 104), 'C 26' disalin 'C26' (hasil 26), 'P 4' disalin 'P4' (hasil 4), 'm 68' disalin 'm68' (hasil 68).
+4b. KOLOM CM: salin persis juga, termasuk angka sebelum titik. Contoh: '1.138' disalin '1.138' (bukan 138), '2.139' disalin '2.139'. Sistem yang akan memisahkan nomor barisnya.
+5. BACA BARIS DEMI BARIS, KOLOM DEMI KOLOM, dari kiri ke kanan, atas ke bawah. Jumlah baris di JSON harus SAMA dengan jumlah baris di foto. Jangan tambah, jangan hilangkan, jangan duplikasi baris.
+6. JANGAN MENGHITUNG. Salin Jumlah dari foto apa adanya. Kalau kolom Jumlah di foto kosong, isi 0. Sel kosong -> 0.
+7. HEADER: salin PERSIS dari foto (jumlah kolom dan nama header HARUS sama dengan foto, jangan tambah/kurangi/ubah nama). Panjang tiap rows = panjang headers.
+8. TANGGAL & NAMA: salin persis seperti di foto, format tanggal jangan diubah.
+9. SEBELUM MENJAWAB, PERIKSA ULANG tiap angka dan tiap nama: bandingkan satu per satu dengan foto. Kalau ragu, pilih bacaan yang bentuk huruf/angkanya PALING MIRIP dengan foto.
+10. Jawab HANYA JSON valid, tanpa markdown, tanpa penjelasan, tanpa komentar.
+Struktur JSON: ${promptStruct}.`;
     let success=false; let resultData=null; let lastErr="";
     try{
       const txt=await callRotation(promptText, _imgKirim);
@@ -2668,11 +2769,11 @@ async function tampilkanNotaDariArsip(nota){
         masterDataRows=[]; if(resultData.rows) resultData.rows.forEach(r=>masterDataRows.push({rowVals:r}));
         renderStrukturTabel();
       } else if(currentFormatNota==='RINCIAN'){
-        if(resultData.items) masterDataRows=resultData.items;
-        if(resultData.resiko1!==undefined) window.resiko1Val=resultData.resiko1;
-        if(resultData.resiko2!==undefined) window.resiko2Val=resultData.resiko2;
+        if(resultData.items) masterDataRows=normalisasiItemsHasil(resultData.items);
+        if(resultData.resiko1!==undefined) window.resiko1Val=bersihSelOtomatis(resultData.resiko1);
+        if(resultData.resiko2!==undefined) window.resiko2Val=bersihSelOtomatis(resultData.resiko2);
         renderTableRows();
-      } else { masterDataRows=resultData.items||[]; renderTableRows(); }
+      } else { masterDataRows=normalisasiItemsHasil(resultData.items||[]); renderTableRows(); }
       currentPage=1; renderTableRows(); savePro();
       tampilkanToast(`Berhasil (${currentFormatNota}) dalam ${((Date.now()-_t0)/1000).toFixed(1)} dtk • ${proKeys.length||1} Key`,'success');
     } else {
@@ -3140,6 +3241,37 @@ document.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && document.getEl
 <!-- [LOCK] OVERRIDE FINAL -->
 <script>
 
+// PERTAHANKAN KUALITAS + AKURAT (REV39): siapkan foto untuk ekstrak.
+// ATURAN: TIDAK PERNAH turunkan resolusi / kualitas foto asli. Foto besar dikirim APA ADANYA (paling cepat, kualitas 100%).
+// Foto KECIL (<2000px) justru DIPERBESAR ke 2000px + kontras diperkuat, supaya garis tipis angka '1' tulisan tangan tidak hilang di mata model.
+// Alur sesuai permintaan: upload pertahankan kualitas -> ekstrak cepat + akurat -> simpan D1 kompres 75%.
+window.siapkanFotoEkstrak = async function(src){
+  if(!src) return src;
+  try{
+    return await new Promise((res)=>{
+      const im = new Image();
+      im.onload = ()=>{
+        try{
+          // Foto sudah cukup besar (>=2000px): kirim APA ADANYA, tanpa olah ulang. Paling cepat, kualitas 100%.
+          if(im.width >= 2000){ res(src); return; }
+          // Foto kecil: perbesar ke 2000px + kontras, supaya digit tipis terbaca model.
+          const TARGET = 2000;
+          const scale = TARGET / im.width;
+          const w = TARGET, h = Math.round(im.height * scale);
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          const ctx = c.getContext('2d');
+          try{ ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; }catch{}
+          try{ ctx.filter = 'contrast(1.3) brightness(1.05)'; }catch{}
+          ctx.drawImage(im, 0, 0, w, h);
+          res(c.toDataURL('image/jpeg', 0.95));
+        }catch{ res(src); }
+      };
+      im.onerror = ()=>res(src);
+      im.src = src;
+    });
+  }catch{ return src; }
+};
+
 window.getSession = function(){
   try{
     const h=window.location.hash||'';
@@ -3161,14 +3293,36 @@ window.getSession = function(){
   return null;
 };
 window.setSession = function(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} };
-window.clearSession = function(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} };
+window.clearSession = function(){ try{ fetch('/api/auth?action=logout', { method:'POST', credentials:'same-origin' }).catch(()=>{}); }catch{} try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} try{ sessionStorage.removeItem('PANDAWA_SESSION_V14'); }catch{} };
 window.doLogin = async function(){
   const u=(document.getElementById('loginUser')?.value||'').trim();
   const p=(document.getElementById('loginPass')?.value||'');
+  const code=(document.getElementById('login2faCode')?.value||'').trim();
   const errEl=document.getElementById('loginError');
   if(!u || !p){ if(errEl){ errEl.textContent='Username & password wajib.'; errEl.classList.remove('hidden'); } return; }
+  if(window._pending2fa && code){
+    try{
+      const res = await fetch('/api/auth?action=login-2fa', { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'same-origin', body: JSON.stringify({ tempToken: window._pending2fa, code }) });
+      const text = await res.text();
+      let j = {};
+      try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+      if(!res.ok || j.ok === false){ let msg = j.error || j.message || ('HTTP ' + res.status); if(errEl){ errEl.textContent = msg; errEl.classList.remove('hidden'); } return; }
+      const user = j.user || { username:u, role:'user', nama:u };
+      const s = { username:user.username, role:user.role, nama:user.nama||user.username, loginAt:Date.now() };
+      try{ sessionStorage.setItem('PANDAWA_SESSION_V14', JSON.stringify(s)); }catch{}
+      window._pending2fa = null;
+      const codeEl=document.getElementById('login2faCode'); if(codeEl){ codeEl.value=''; }
+      const codeBox=document.getElementById('login2faBox'); if(codeBox) codeBox.classList.add('hidden');
+      if(errEl) errEl.classList.add('hidden');
+      if(typeof hideLoginOverlay==='function') hideLoginOverlay();
+      if(typeof applyRoleUI==='function') applyRoleUI(s);
+      if(typeof tampilkanToast==='function') tampilkanToast('Selamat datang, '+(s.nama||s.username)+' ('+s.role+')','success');
+
+    }catch(e){ if(errEl){ errEl.textContent = 'Gagal verifikasi 2FA: ' + String(e.message||e); errEl.classList.remove('hidden'); } }
+    return;
+  }
   try{
-    const res = await fetch('/api/auth?action=login', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ username:u, password:p }) });
+    const res = await fetch('/api/auth?action=login', { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'same-origin', body: JSON.stringify({ username:u, password:p }) });
     const text = await res.text();
     let j = {};
     try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
@@ -3178,10 +3332,16 @@ window.doLogin = async function(){
       if(errEl){ errEl.textContent = msg; errEl.classList.remove('hidden'); }
       return;
     }
-    const token = j.token || '';
+    if(j.need2fa){
+      window._pending2fa = j.tempToken || '';
+      const codeBox=document.getElementById('login2faBox');
+      if(codeBox) codeBox.classList.remove('hidden');
+      const codeEl=document.getElementById('login2faCode'); if(codeEl){ codeEl.value=''; codeEl.focus(); }
+      if(errEl){ errEl.textContent='Password benar. Masukkan kode 6 digit dari Google Authenticator, lalu tekan Login lagi.'; errEl.classList.remove('hidden'); }
+      return;
+    }
     const user = j.user || { username:u, role:'user', nama:u };
     const s = { username:user.username, role:user.role, nama:user.nama||user.username, loginAt:Date.now() };
-    try{ sessionStorage.setItem('PANDAWA_TOKEN', token); }catch{}
     try{ sessionStorage.setItem('PANDAWA_SESSION_V14', JSON.stringify(s)); }catch{}
     if(errEl) errEl.classList.add('hidden');
     if(typeof hideLoginOverlay==='function') hideLoginOverlay();
@@ -3195,7 +3355,8 @@ window.doLogin = async function(){
 
 window.simpanDataKeD1 = async function(){
   if(masterDataRows.length===0 && !currentBase64Image){ tampilkanToast('Tidak ada data untuk disimpan!','error'); return; }
-  let imgForD1 = currentBase64Image||'';
+  // SIMPAN D1: sumber foto = foto ASLI, lalu dikompres ke kualitas 75%
+  let imgForD1 = (window._fotoAsliHiRes && window._fotoAsliHiRes.length > 1000) ? window._fotoAsliHiRes : (currentBase64Image||'');
   if(imgForD1){
     try{
       const im=new Image();
@@ -3208,15 +3369,17 @@ window.simpanDataKeD1 = async function(){
             c.getContext('2d').drawImage(im,0,0,w,h);
             return c.toDataURL('image/jpeg', quality);
           };
-          let out = tryCompress(700, 0.5);
-          if(out.length > 300000) out = tryCompress(500, 0.4);
-          if(out.length > 300000) out = tryCompress(400, 0.35);
+          // KOMPRES SIMPAN: kualitas 75% (tetap tajam, hemat D1). Kecilkan dimensi hanya kalau masih > 500KB.
+          let out = tryCompress(2400, 0.75);
+          if(out.length > 500000) out = tryCompress(1600, 0.75);
+          if(out.length > 500000) out = tryCompress(1200, 0.75);
+          if(out.length > 500000) out = tryCompress(900, 0.75);
           res(out);
         };
-        im.onerror=()=>res(currentBase64Image.slice(0,300000));
-        im.src=currentBase64Image;
+        im.onerror=()=>res(imgForD1.slice(0,500000));
+        im.src=imgForD1;
       });
-    }catch{ imgForD1 = currentBase64Image.slice(0,300000); }
+    }catch{ imgForD1 = imgForD1.slice(0,500000); }
   }
   const payload={ id: String(Date.now()), feature_type: currentFormatNota, no_nota: document.getElementById('metaNota').value||'', tanggal: document.getElementById('metaTanggal').value||'', nama_kapal: document.getElementById('metaKapal').value||'', image_base64: imgForD1, image_url: imgForD1, status:'saved', created_at: new Date().toISOString(), items: masterDataRows, resiko1: window.resiko1Val||0, resiko2: window.resiko2Val||0 };
   const btn=document.getElementById('btnSimpanD1');
