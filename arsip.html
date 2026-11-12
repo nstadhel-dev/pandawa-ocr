@@ -1280,14 +1280,36 @@ window.getSession = function(){
   return null;
 };
 window.setSession = function(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} };
-window.clearSession = function(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} };
+window.clearSession = function(){ try{ fetch('/api/auth?action=logout', { method:'POST', credentials:'same-origin' }).catch(()=>{}); }catch{} try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} try{ sessionStorage.removeItem('PANDAWA_SESSION_V14'); }catch{} };
 window.doLogin = async function(){
   const u=(document.getElementById('loginUser')?.value||'').trim();
   const p=(document.getElementById('loginPass')?.value||'');
+  const code=(document.getElementById('login2faCode')?.value||'').trim();
   const errEl=document.getElementById('loginError');
   if(!u || !p){ if(errEl){ errEl.textContent='Username & password wajib.'; errEl.classList.remove('hidden'); } return; }
+  if(window._pending2fa && code){
+    try{
+      const res = await fetch('/api/auth?action=login-2fa', { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'same-origin', body: JSON.stringify({ tempToken: window._pending2fa, code }) });
+      const text = await res.text();
+      let j = {};
+      try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
+      if(!res.ok || j.ok === false){ let msg = j.error || j.message || ('HTTP ' + res.status); if(errEl){ errEl.textContent = msg; errEl.classList.remove('hidden'); } return; }
+      const user = j.user || { username:u, role:'user', nama:u };
+      const s = { username:user.username, role:user.role, nama:user.nama||user.username, loginAt:Date.now() };
+      try{ sessionStorage.setItem('PANDAWA_SESSION_V14', JSON.stringify(s)); }catch{}
+      window._pending2fa = null;
+      const codeEl=document.getElementById('login2faCode'); if(codeEl){ codeEl.value=''; }
+      const codeBox=document.getElementById('login2faBox'); if(codeBox) codeBox.classList.add('hidden');
+      if(errEl) errEl.classList.add('hidden');
+      if(typeof hideLoginOverlay==='function') hideLoginOverlay();
+      if(typeof applyRoleUI==='function') applyRoleUI(s);
+      if(typeof tampilkanToast==='function') tampilkanToast('Selamat datang, '+(s.nama||s.username)+' ('+s.role+')','success');
+    try{ window.location.reload(); }catch{}
+    }catch(e){ if(errEl){ errEl.textContent = 'Gagal verifikasi 2FA: ' + String(e.message||e); errEl.classList.remove('hidden'); } }
+    return;
+  }
   try{
-    const res = await fetch('/api/auth?action=login', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ username:u, password:p }) });
+    const res = await fetch('/api/auth?action=login', { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'same-origin', body: JSON.stringify({ username:u, password:p }) });
     const text = await res.text();
     let j = {};
     try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
@@ -1297,10 +1319,16 @@ window.doLogin = async function(){
       if(errEl){ errEl.textContent = msg; errEl.classList.remove('hidden'); }
       return;
     }
-    const token = j.token || '';
+    if(j.need2fa){
+      window._pending2fa = j.tempToken || '';
+      const codeBox=document.getElementById('login2faBox');
+      if(codeBox) codeBox.classList.remove('hidden');
+      const codeEl=document.getElementById('login2faCode'); if(codeEl){ codeEl.value=''; codeEl.focus(); }
+      if(errEl){ errEl.textContent='Password benar. Masukkan kode 6 digit dari Google Authenticator, lalu tekan Login lagi.'; errEl.classList.remove('hidden'); }
+      return;
+    }
     const user = j.user || { username:u, role:'user', nama:u };
     const s = { username:user.username, role:user.role, nama:user.nama||user.username, loginAt:Date.now() };
-    try{ sessionStorage.setItem('PANDAWA_TOKEN', token); }catch{}
     try{ sessionStorage.setItem('PANDAWA_SESSION_V14', JSON.stringify(s)); }catch{}
     if(errEl) errEl.classList.add('hidden');
     if(typeof hideLoginOverlay==='function') hideLoginOverlay();

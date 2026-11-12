@@ -35,7 +35,7 @@ export async function onRequestPost({ request, env }){
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ parts: [ { text: prompt }, { inline_data: { mime_type: 'image/jpeg', data: image } } ] }],
-            generationConfig: { temperature: 0.1, maxOutputTokens: 8192 }
+            generationConfig: { temperature: 0, maxOutputTokens: 8192 }
           })
         });
         const j = await res.json().catch(()=>({}));
