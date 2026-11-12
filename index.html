@@ -795,18 +795,32 @@ window.addEventListener('DOMContentLoaded', function(){
     // Model HANYA menyalin persis (boleh 'P109'); kode di sini yang mengubah jadi angka. Kode tidak pernah salah baca.
     // Field 'jenis' (nama) tidak dibersihkan supaya teksnya utuh.
     // CM: buang awalan nomor baris 'N.' kalau cocok dengan nomor baris (baris 1: '1.138' -> 138).
-    // REV41 - AKURAT, TIDAK TEBAK: kolom angka HANYA angka murni, huruf TIDAK PERNAH tampil.
-    // Jika tidak jelas/buram -> KOSONGKAN ('') untuk entri manual, jangan tebak angka salah. Berlaku KHUSUS KNC/KNT/KNB.
+    // REV40 - JAMINAN MUTLAK: kolom angka HANYA berisi angka murni, huruf TIDAK PERNAH tampil.
     // 'M 120'->120, 'P 111'->111, 'G 120'->120, 'MU 112'->112, 'I 115'->115, 'H 104'->104, 'C 26'->26.
-    // 'MU' (hanya huruf, tanpa angka) -> '' (kosong), bukan 0, bukan hurufnya.
-    // Sel kosong di foto -> '' (kosong).
+    // Kalau sel tidak ada digitnya sama sekali (hanya huruf) -> 0, bukan hurufnya.
     function angkaMurni(v){
+      if(v==null) return 0;
+      if(typeof v === 'number') return isNaN(v)?0:v;
+      const s=String(v).trim();
+      if(s==='') return 0;
+      if(!/[0-9]/.test(s)) return 0; // hanya huruf, tanpa angka -> 0 (huruf TIDAK ditampilkan)
+      // Buang SEMUA huruf & spasi, sisakan digit, titik ribuan, koma desimal, minus.
+      let num=s.replace(/[^0-9.,-]/g,'');
+      if(num===''||num==='-'||num==='.'||num===',') return 0;
+      if(num.includes(',')){ num=num.replace(/\./g,'').replace(',', '.'); }
+      else { num=num.replace(/\./g,''); }
+      if(!/^-?\d+(\.\d+)?$/.test(num)) return 0;
+      const n=parseFloat(num);
+      return isNaN(n)?0:n;
+    }
+    // REV42 - KHUSUS KNC/KNT/KNB: kalau tidak jelas -> KOSONG ('') untuk entri manual, jangan tebak. Format lain TIDAK berubah.
+    // 'MU' (hanya huruf) -> '', sel kosong -> '', 'P 109' -> 109, 'I 111' -> 111.
+    function angkaKNC(v){
       if(v==null) return '';
       if(typeof v === 'number') return isNaN(v)?'':v;
       const s=String(v).trim();
       if(s==='') return '';
       if(!/[0-9]/.test(s)) return ''; // hanya huruf, tanpa angka -> kosong untuk manual
-      // Buang SEMUA huruf & spasi, sisakan digit, titik ribuan, koma desimal, minus.
       let num=s.replace(/[^0-9.,-]/g,'');
       if(num===''||num==='-'||num==='.'||num===',') return '';
       if(num.includes(',')){ num=num.replace(/\./g,'').replace(',', '.'); }
@@ -815,14 +829,14 @@ window.addEventListener('DOMContentLoaded', function(){
       const n=parseFloat(num);
       return isNaN(n)?'':n;
     }
-    // Alias lama tetap jalan, tapi sekarang mengembalikan '' jika tidak ada digit
-    function angkaMurniAtauKosong(v){ return angkaMurni(v); }
     function normalisasiItemsHasil(items){
       if(!Array.isArray(items)) return items||[];
-      return items.map((it, ri)=>{
+      const KNC_FIELDS=['knl1','knt','kng','knl2','kn','glcc1','glcc2','gltl','rb1','rb2'];
+      const parsed=items.map((it, ri)=>{
         if(!it || typeof it !== 'object') return it;
         const out={};
         const rowNum=ri+1;
+        const isKNC = ('rb1' in it) || ('knl1' in it) || (('kn' in it) && ('glcc1' in it));
         for(const k of Object.keys(it)){
           let v=it[k];
           if(k==='jenis'){ out[k]=v; continue; } // nama jenis (Tengahan/Cumi) tetap teks, bukan kolom angka
@@ -830,10 +844,30 @@ window.addEventListener('DOMContentLoaded', function(){
             const m=v.trim().match(/^(\d+)\.(\d+)$/);
             if(m && parseInt(m[1],10)===rowNum){ v=m[2]; }
           }
-          out[k]=angkaMurni(v); // REV40: paksa angka murni, huruf TIDAK PERNAH lolos
+          // KHUSUS KNC: pakai angkaKNC (tidak jelas -> kosong). Format lain tetap pakai angkaMurni seperti semula.
+          out[k]= isKNC ? angkaKNC(v) : angkaMurni(v);
         }
+        out.__isKNC = isKNC;
         return out;
       });
+      // REV42 - Pengaman KNC: 1 digit yang janggal -> kosong. Contoh: 'P 109' salah baca jadi '9', 'M 106' jadi '6'.
+      // Kalau di satu kolom, >=60% nilai yang terisi adalah 3 digit (>=100), maka nilai 1 digit (1-9) di kolom itu hampir pasti digit yang hilang -> kosongkan untuk entri manual.
+      // Nilai 1 digit yang sah (misal 'P 4' = 4) ikut dikosongkan - itu disengaja, lebih baik kosong daripada salah, user isi manual.
+      const kncRows = parsed.filter(r=>r && r.__isKNC);
+      if(kncRows.length>0){
+        for(const f of KNC_FIELDS){
+          const vals = kncRows.map(r=>r[f]).filter(v=>typeof v==='number');
+          if(vals.length===0) continue;
+          const threeDigit = vals.filter(v=>v>=100).length;
+          if(threeDigit / vals.length >= 0.6){
+            for(const r of kncRows){
+              if(typeof r[f]==='number' && r[f]>=1 && r[f]<=9){ r[f]=''; }
+            }
+          }
+        }
+      }
+      for(const r of parsed){ if(r && typeof r==='object') delete r.__isKNC; }
+      return parsed;
     }
     function otomatisHeadersTampil(){
             // TAMPILAN SAJA: header asli kalau ada, sisanya placeholder 'Kolom N'. TIDAK PERNAH ditulis ke otomatisHeaders, TIDAK PERNAH tersimpan. Biar setelah simpan + tampil, yang muncul header foto, bukan 'Kolom 1 / Kolom 2'.
@@ -1360,12 +1394,12 @@ ATURAN BACA (WAJIB, JANGAN DILANGGAR):
    - Bedakan 8 dan 3: angka 8 punya DUA lingkaran (atas dan bawah), angka 3 hanya SATU lekukan. Contoh: '182' disalin '182' (bukan '132').
    - JANGAN kosongkan sel yang ada tulisannya. Kalau di foto ada tulisan di sel, pasti ada isinya. Jangan isi 0 kalau di foto ada tulisan.
 4. JANGAN BUANG KOLOM. Jangan buang kolom teks (Jenis/Nama/Keterangan/Kapal). Untuk ISI sel: SALIN PERSIS APA ADANYA, TERMASUK HURUFNYA, tanpa spasi. Jangan buang hurufnya, jangan ubah angkanya. Contoh: 'DL42' disalin 'DL42' (bukan 42), 'A43' disalin 'A43', 'Er121' disalin 'Er121', 'CUMI 250' disalin 'CUMI250', 'AB123' disalin 'AB123', 'Rp 1.500' disalin 'Rp1500', 'P 109' disalin 'P109'. Kalau sel HANYA teks tanpa angka (misal 'CUMI'), tulis teksnya apa adanya. Jangan gabung dua sel jadi satu, jangan pisah satu sel jadi dua.
-4a. HURUF AWALAN ADALAH KODE, BUKAN ANGKA - JANGAN DIGABUNG DENGAN ANGKA. JIKA TIDAK JELAS/BURAM, KOSONGKAN SAJA (""). Berlaku untuk SEMUA kolom. Huruf yang sering muncul di depan angka: M, P, G, MU, I, H, C, m. Huruf-huruf ini adalah kode, BUKAN bagian dari angka, dan TIDAK DITAMPILKAN di hasil akhir (sistem yang membuangnya, hasil akhir hanya angka).
+4a. HURUF AWALAN ADALAH KODE, BUKAN ANGKA - JANGAN DIGABUNG DENGAN ANGKA. Berlaku untuk SEMUA kolom. Huruf yang sering muncul di depan angka: M, P, G, MU, I, H, C, m. Huruf-huruf ini adalah kode, BUKAN bagian dari angka, dan TIDAK DITAMPILKAN di hasil akhir (sistem yang membuangnya, hasil akhir hanya angka).
    - PENTING: huruf I (i besar) adalah HURUF, BUKAN angka 1. Bentuknya mirip, tapi jangan digabung. Contoh: 'I 115' = huruf I + angka 115 (hasil akhir 115, BUKAN 1115). 'I 120' = 120 (bukan 1120). 'I 113' = 113 (bukan 1113).
    - Contoh salin yang benar: 'M 120' disalin 'M120' (hasil 120), 'P 111' disalin 'P111' (hasil 111), 'G 120' disalin 'G120' (hasil 120), 'MU 112' disalin 'MU112' (hasil 112), 'H 104' disalin 'H104' (hasil 104), 'C 26' disalin 'C26' (hasil 26), 'P 4' disalin 'P4' (hasil 4), 'm 68' disalin 'm68' (hasil 68).
    - JANGAN pernah menggabung huruf dengan angka jadi satu bilangan. 'MU 112' bukan 112112, bukan 11212. 'G 40' bukan 640.
-4b. AKURASI DI ATAS SEGALANYA - KHUSUS KNC/KNT/KNB: Jika sel buram, tidak jelas, terpotong, atau ragu antara 2 angka, KOSONGKAN SAJA (""), JANGAN menebak. Biarkan kosong untuk entri manual. Lebih baik kosong daripada salah. Contoh: kalau 'P 111' terlihat seperti 'P 11?' (ragu angka terakhir), tulis "" bukan "111" atau "11". Kalau sel kosong di foto, tulis "". Berlaku untuk SEMUA kolom KNC/KNT/KNB.
 4b. KOLOM CM: salin persis juga, termasuk angka sebelum titik. Contoh: '1.138' disalin '1.138' (bukan 138), '2.139' disalin '2.139'. Sistem yang akan memisahkan nomor barisnya.
+4c. KHUSUS KNC/KNT/KNB - JANGAN GESER KOLOM, JANGAN BUANG DIGIT. Tabel punya 12 kolom data, urut dari kiri: KNL, KNT, KNG, KNL, KN, GLCC, GLCC, GLTL, RB, RB, KPS, CM. Kolom NO (nomor baris 1,2,3...) BUKAN kolom data, jangan dihitung. Isi SEMUA 12 field tiap baris, jangan lompat. KN adalah kolom ke-5, jangan dikosongkan kalau di foto ada tulisannya. RB adalah kolom ke-9 dan ke-10. Setelah isi satu baris, hitung: harus 12 field. Kalau hanya 11, berarti ada kolom terlewat - baca ulang baris itu. JANGAN geser nilai: nilai KN tidak boleh masuk ke GLCC, nilai GLCC tidak boleh masuk ke RB. Baca per kolom dari atas ke bawah: selesaikan satu kolom untuk semua baris, baru pindah ke kolom berikutnya. Untuk tiap sel, hitung digitnya: kalau di foto 3 digit, hasil harus 3 digit. Kalau hanya terbaca 1 digit padahal kolom lain 3 digit, KOSONGKAN (""), jangan tulis 1 digit itu. Kalau ragu antara 2 bacaan, KOSONGKAN (""), jangan tebak. Contoh SALAH: 'P 109' -> '9' (salah, hilang 10), 'M 106' -> '6' (salah, hilang 10), 'I 111' -> '11' (salah, hilang satu 1), 'H 112' -> '42' (salah). Contoh BENAR: 'P 109' -> 'P109', 'M 106' -> 'M106', 'I 111' -> 'I111', 'H 112' -> 'H112'.
 5. BACA BARIS DEMI BARIS, KOLOM DEMI KOLOM, dari kiri ke kanan, atas ke bawah. Jumlah baris di JSON harus SAMA dengan jumlah baris di foto. Jangan tambah baris, jangan hilangkan baris, jangan duplikasi baris.
 6. JANGAN MENGHITUNG. Jangan isi kolom Jumlah dari Berat x Harga. Salin Jumlah dari foto apa adanya. Kalau kolom Jumlah di foto kosong, isi 0.
 7. TANGGAL & NAMA: salin tanggal dan nama kapal persis seperti di foto (format tanggal jangan diubah: 12/01/2026 tetap 12/01/2026, jangan dibalik jadi 2026-01-12).
@@ -2725,10 +2759,11 @@ ATURAN BACA (WAJIB, JANGAN DILANGGAR):
    - Bedakan 8 dan 3: angka 8 punya DUA lingkaran (atas dan bawah), angka 3 hanya SATU lekukan. Contoh: '182' disalin '182' (bukan '132').
    - JANGAN kosongkan sel yang ada tulisannya. Kalau di foto ada tulisan di sel, pasti ada isinya. Jangan isi 0 kalau di foto ada tulisan.
 4. JANGAN BUANG KOLOM. Jangan buang kolom teks. Untuk ISI sel: SALIN PERSIS APA ADANYA, TERMASUK HURUFNYA, tanpa spasi. Jangan buang hurufnya, jangan ubah angkanya. Contoh: 'DL42' disalin 'DL42' (bukan 42), 'A43' disalin 'A43', 'Er121' disalin 'Er121', 'CUMI 250' disalin 'CUMI250', 'P 109' disalin 'P109'. Kalau sel HANYA teks tanpa angka (misal 'CUMI'), tulis teksnya apa adanya. Jangan gabung 2 sel jadi satu, jangan pisah satu sel jadi dua.
-4a. HURUF AWALAN ADALAH KODE, BUKAN ANGKA - JANGAN DIGABUNG DENGAN ANGKA. JIKA TIDAK JELAS/BURAM, KOSONGKAN SAJA (""). Berlaku untuk SEMUA kolom. Huruf yang sering muncul: M, P, G, MU, I, H, C, m. Huruf ini kode, BUKAN bagian angka, TIDAK DITAMPILKAN di hasil akhir (sistem yang membuangnya, hasil akhir hanya angka).
+4a. HURUF AWALAN ADALAH KODE, BUKAN ANGKA - JANGAN DIGABUNG DENGAN ANGKA. Berlaku untuk SEMUA kolom. Huruf yang sering muncul: M, P, G, MU, I, H, C, m. Huruf ini kode, BUKAN bagian angka, TIDAK DITAMPILKAN di hasil akhir (sistem yang membuangnya, hasil akhir hanya angka).
    - PENTING: huruf I adalah HURUF, BUKAN angka 1. 'I 115' = huruf I + angka 115 (hasil 115, BUKAN 1115). 'I 120' = 120 (bukan 1120).
    - Contoh: 'M 120' disalin 'M120' (hasil 120), 'P 111' disalin 'P111' (hasil 111), 'G 120' disalin 'G120' (hasil 120), 'MU 112' disalin 'MU112' (hasil 112), 'H 104' disalin 'H104' (hasil 104), 'C 26' disalin 'C26' (hasil 26), 'P 4' disalin 'P4' (hasil 4), 'm 68' disalin 'm68' (hasil 68).
 4b. KOLOM CM: salin persis juga, termasuk angka sebelum titik. Contoh: '1.138' disalin '1.138' (bukan 138), '2.139' disalin '2.139'. Sistem yang akan memisahkan nomor barisnya.
+4c. KHUSUS KNC/KNT/KNB - JANGAN GESER KOLOM, JANGAN BUANG DIGIT. Tabel punya 12 kolom data, urut dari kiri: KNL, KNT, KNG, KNL, KN, GLCC, GLCC, GLTL, RB, RB, KPS, CM. Kolom NO (nomor baris 1,2,3...) BUKAN kolom data, jangan dihitung. Isi SEMUA 12 field tiap baris, jangan lompat. KN adalah kolom ke-5, jangan dikosongkan kalau di foto ada tulisannya. RB adalah kolom ke-9 dan ke-10. Setelah isi satu baris, hitung: harus 12 field. Kalau hanya 11, berarti ada kolom terlewat - baca ulang baris itu. JANGAN geser nilai: nilai KN tidak boleh masuk ke GLCC, nilai GLCC tidak boleh masuk ke RB. Baca per kolom dari atas ke bawah: selesaikan satu kolom untuk semua baris, baru pindah ke kolom berikutnya. Untuk tiap sel, hitung digitnya: kalau di foto 3 digit, hasil harus 3 digit. Kalau hanya terbaca 1 digit padahal kolom lain 3 digit, KOSONGKAN (""), jangan tulis 1 digit itu. Kalau ragu antara 2 bacaan, KOSONGKAN (""), jangan tebak. Contoh SALAH: 'P 109' -> '9' (salah, hilang 10), 'M 106' -> '6' (salah, hilang 10), 'I 111' -> '11' (salah, hilang satu 1), 'H 112' -> '42' (salah). Contoh BENAR: 'P 109' -> 'P109', 'M 106' -> 'M106', 'I 111' -> 'I111', 'H 112' -> 'H112'.
 5. BACA BARIS DEMI BARIS, KOLOM DEMI KOLOM, dari kiri ke kanan, atas ke bawah. Jumlah baris di JSON harus SAMA dengan jumlah baris di foto. Jangan tambah, jangan hilangkan, jangan duplikasi baris.
 6. JANGAN MENGHITUNG. Salin Jumlah dari foto apa adanya. Kalau kolom Jumlah di foto kosong, isi 0. Sel kosong -> 0.
 7. HEADER: salin PERSIS dari foto (jumlah kolom dan nama header HARUS sama dengan foto, jangan tambah/kurangi/ubah nama). Panjang tiap rows = panjang headers.
