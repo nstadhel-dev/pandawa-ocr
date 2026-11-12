@@ -258,30 +258,6 @@ window.addEventListener('DOMContentLoaded', function(){
   <p class="text-[10px] text-gray-500 mt-2">⚠️ Jangan hapus tabel <b class="text-red-400">Settings</b> di bawah kalau tidak mau key hilang. Kalau terhapus, set ulang key di sini.</p>
 </div>
 
-<div class="bg-gray-900 border border-purple-500/30 rounded-2xl p-4 mb-5">
-  <h2 class="text-sm font-bold text-purple-300 mb-1">🛡️ Keamanan 2FA (Google Authenticator) — Lapisan Kedua</h2>
-  <p class="text-[11px] text-gray-500 mb-2">2FA = setelah password benar, user wajib masukkan kode 6 digit dari HP (Google Authenticator / Authy). <b class="text-gray-300">Opsional per user.</b> Kalau belum aktif, login tetap seperti biasa (hanya password). <b class="text-amber-300">Aktifkan untuk Admin dulu.</b> Kalau HP hilang / kode tidak bisa, Admin bisa Nonaktifkan 2FA di sini (lalu user login pakai password saja).</p>
-  <div class="flex flex-wrap gap-2 items-center mb-2">
-    <select id="twofaUser" class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200"></select>
-    <button onclick="cekStatus2fa()" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-bold rounded-lg">🔍 Cek Status</button>
-    <span id="twofaStatus" class="text-[11px] text-gray-400">-</span>
-  </div>
-  <div class="flex flex-wrap gap-2 mb-2">
-    <button onclick="buatKode2fa()" class="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-lg">🔑 Buat Kode 2FA</button>
-    <button onclick="nonaktifkan2fa()" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg">🚫 Nonaktifkan 2FA</button>
-  </div>
-  <div id="twofaSetupBox" class="hidden bg-gray-950 border border-purple-500/30 rounded-xl p-3">
-    <p class="text-[11px] text-gray-300 mb-1">1. Buka <b>Google Authenticator</b> (atau Authy) di HP → Tambah (+) → <b>Masukkan kunci penyiapan</b> → Nama: <b>PANDAWA OCR</b> → Kunci:</p>
-    <p class="text-sm font-mono font-bold text-amber-300 break-all mb-1" id="twofaSecret">-</p>
-    <p class="text-[10px] text-gray-500 mb-2">Jangan bagikan kunci ini ke siapa pun. Kunci ini hanya tampil sekali (sampai halaman di-refresh).</p>
-    <p class="text-[11px] text-gray-300 mb-1">2. Masukkan kode 6 digit yang tampil di HP:</p>
-    <div class="flex gap-2">
-      <input id="twofaCode" type="text" inputmode="numeric" maxlength="6" placeholder="123456" class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 font-mono w-32">
-      <button onclick="aktifkan2fa()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-gray-950 text-xs font-bold rounded-lg">✅ Aktifkan 2FA</button>
-    </div>
-  </div>
-</div>
-
 <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 mb-5">
   <h2 class="text-sm font-bold text-amber-300 mb-3">☁️ Database D1 (Cloudflare) — Backup, Restore & Storage</h2>
   <div id="d1WarnBox" class="hidden mb-3 p-3 rounded-xl border border-red-500/50 bg-red-500/10">
@@ -557,36 +533,14 @@ window.getSession = function(){
   return null;
 };
 window.setSession = function(s){ try{ sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); }catch{} };
-window.clearSession = function(){ try{ fetch('/api/auth?action=logout', { method:'POST', credentials:'same-origin' }).catch(()=>{}); }catch{} try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} try{ sessionStorage.removeItem('PANDAWA_SESSION_V14'); }catch{} };
+window.clearSession = function(){ try{ sessionStorage.removeItem(AUTH_SESSION_KEY); }catch{} try{ sessionStorage.removeItem('PANDAWA_TOKEN'); }catch{} };
 window.doLogin = async function(){
   const u=(document.getElementById('loginUser')?.value||'').trim();
   const p=(document.getElementById('loginPass')?.value||'');
-  const code=(document.getElementById('login2faCode')?.value||'').trim();
   const errEl=document.getElementById('loginError');
   if(!u || !p){ if(errEl){ errEl.textContent='Username & password wajib.'; errEl.classList.remove('hidden'); } return; }
-  if(window._pending2fa && code){
-    try{
-      const res = await fetch('/api/auth?action=login-2fa', { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'same-origin', body: JSON.stringify({ tempToken: window._pending2fa, code }) });
-      const text = await res.text();
-      let j = {};
-      try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
-      if(!res.ok || j.ok === false){ let msg = j.error || j.message || ('HTTP ' + res.status); if(errEl){ errEl.textContent = msg; errEl.classList.remove('hidden'); } return; }
-      const user = j.user || { username:u, role:'user', nama:u };
-      const s = { username:user.username, role:user.role, nama:user.nama||user.username, loginAt:Date.now() };
-      try{ sessionStorage.setItem('PANDAWA_SESSION_V14', JSON.stringify(s)); }catch{}
-      window._pending2fa = null;
-      const codeEl=document.getElementById('login2faCode'); if(codeEl){ codeEl.value=''; }
-      const codeBox=document.getElementById('login2faBox'); if(codeBox) codeBox.classList.add('hidden');
-      if(errEl) errEl.classList.add('hidden');
-      if(typeof hideLoginOverlay==='function') hideLoginOverlay();
-      if(typeof applyRoleUI==='function') applyRoleUI(s);
-      if(typeof tampilkanToast==='function') tampilkanToast('Selamat datang, '+(s.nama||s.username)+' ('+s.role+')','success');
-    try{ window.location.reload(); }catch{}
-    }catch(e){ if(errEl){ errEl.textContent = 'Gagal verifikasi 2FA: ' + String(e.message||e); errEl.classList.remove('hidden'); } }
-    return;
-  }
   try{
-    const res = await fetch('/api/auth?action=login', { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'same-origin', body: JSON.stringify({ username:u, password:p }) });
+    const res = await fetch('/api/auth?action=login', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ username:u, password:p }) });
     const text = await res.text();
     let j = {};
     try{ j = JSON.parse(text); }catch{ j = { raw: text }; }
@@ -596,16 +550,10 @@ window.doLogin = async function(){
       if(errEl){ errEl.textContent = msg; errEl.classList.remove('hidden'); }
       return;
     }
-    if(j.need2fa){
-      window._pending2fa = j.tempToken || '';
-      const codeBox=document.getElementById('login2faBox');
-      if(codeBox) codeBox.classList.remove('hidden');
-      const codeEl=document.getElementById('login2faCode'); if(codeEl){ codeEl.value=''; codeEl.focus(); }
-      if(errEl){ errEl.textContent='Password benar. Masukkan kode 6 digit dari Google Authenticator, lalu tekan Login lagi.'; errEl.classList.remove('hidden'); }
-      return;
-    }
+    const token = j.token || '';
     const user = j.user || { username:u, role:'user', nama:u };
     const s = { username:user.username, role:user.role, nama:user.nama||user.username, loginAt:Date.now() };
+    try{ sessionStorage.setItem('PANDAWA_TOKEN', token); }catch{}
     try{ sessionStorage.setItem('PANDAWA_SESSION_V14', JSON.stringify(s)); }catch{}
     if(errEl) errEl.classList.add('hidden');
     if(typeof hideLoginOverlay==='function') hideLoginOverlay();
@@ -873,73 +821,6 @@ window.simpanGeminiKeyD1 = async function(){
 try{
   if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', ()=>{ if(typeof cekGeminiKeyStatus==='function') cekGeminiKeyStatus(); }); }
   else { if(typeof cekGeminiKeyStatus==='function') cekGeminiKeyStatus(); }
-}catch{}
-</script>
-
-
-<script>
-window.isiDropdown2fa = function(){
-  const sel = document.getElementById('twofaUser');
-  if(!sel) return;
-  const users = window._usersCache || [];
-  sel.innerHTML = users.map(u=>'<option value="'+u.username+'">'+u.username+' ('+u.role+')</option>').join('') || '<option value="">(belum ada user)</option>';
-};
-window.cekStatus2fa = async function(){
-  const u = document.getElementById('twofaUser')?.value || '';
-  const el = document.getElementById('twofaStatus');
-  if(!u){ if(el) el.textContent='Pilih user dulu.'; return; }
-  if(el) el.textContent='Memeriksa...';
-  try{
-    const res = await fetch('/api/auth?action=2fa-status&username='+encodeURIComponent(u));
-    const j = await res.json();
-    if(!res.ok || j.ok===false) throw new Error(j.error||('HTTP '+res.status));
-    if(el) el.innerHTML = j.has2fa ? '✅ <b class="text-emerald-300">2FA AKTIF</b> untuk '+u : '❌ <b class="text-red-300">2FA BELUM AKTIF</b> untuk '+u;
-  }catch(e){ if(el) el.textContent='Gagal cek: '+String(e.message||e); }
-};
-window.buatKode2fa = async function(){
-  const u = document.getElementById('twofaUser')?.value || '';
-  if(!u){ alert('Pilih user dulu.'); return; }
-  try{
-    const res = await fetch('/api/auth?action=setup-2fa', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ username:u }) });
-    const j = await res.json();
-    if(!res.ok || j.ok===false) throw new Error(j.error||('HTTP '+res.status));
-    document.getElementById('twofaSecret').textContent = j.secret;
-    document.getElementById('twofaSetupBox').classList.remove('hidden');
-    document.getElementById('twofaCode').value='';
-    document.getElementById('twofaCode').focus();
-  }catch(e){ alert('Gagal buat kode 2FA: '+String(e.message||e)); }
-};
-window.aktifkan2fa = async function(){
-  const u = document.getElementById('twofaUser')?.value || '';
-  const code = (document.getElementById('twofaCode')?.value||'').trim();
-  if(!u || !code){ alert('Pilih user & isi kode 6 digit dari HP.'); return; }
-  try{
-    const res = await fetch('/api/auth?action=confirm-2fa', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ username:u, code }) });
-    const j = await res.json();
-    if(!res.ok || j.ok===false) throw new Error(j.error||('HTTP '+res.status));
-    alert('✅ 2FA aktif untuk '+u+'. Mulai sekarang, login '+u+' wajib masukkan kode 6 digit dari HP.');
-    document.getElementById('twofaSetupBox').classList.add('hidden');
-    if(typeof cekStatus2fa==='function') cekStatus2fa();
-  }catch(e){ alert('Gagal aktifkan 2FA: '+String(e.message||e)); }
-};
-window.nonaktifkan2fa = async function(){
-  const u = document.getElementById('twofaUser')?.value || '';
-  if(!u){ alert('Pilih user dulu.'); return; }
-  if(!confirm('Nonaktifkan 2FA untuk "'+u+'"? User ini akan login pakai password saja.')) return;
-  try{
-    const res = await fetch('/api/auth?action=disable-2fa', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ username:u }) });
-    const j = await res.json();
-    if(!res.ok || j.ok===false) throw new Error(j.error||('HTTP '+res.status));
-    alert('2FA dinonaktifkan untuk '+u+'.');
-    document.getElementById('twofaSetupBox').classList.add('hidden');
-    if(typeof cekStatus2fa==='function') cekStatus2fa();
-  }catch(e){ alert('Gagal nonaktifkan 2FA: '+String(e.message||e)); }
-};
-try{
-  const _origLoadUsers2fa = window.loadUsers;
-  window.loadUsers = async function(){ if(typeof _origLoadUsers2fa==='function') await _origLoadUsers2fa(); if(typeof isiDropdown2fa==='function') isiDropdown2fa(); };
-  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', ()=>{ if(typeof isiDropdown2fa==='function') isiDropdown2fa(); }); }
-  else { if(typeof isiDropdown2fa==='function') isiDropdown2fa(); }
 }catch{}
 </script>
 
